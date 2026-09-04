@@ -46,6 +46,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.DayOfWeek;
 import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -57,6 +58,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -360,7 +362,7 @@ public class AgentService {
             Optional<String> raw;
             try {
                 raw = genAiClient.chatWithTools(
-                        buildSystemContext(user) + "\nToday is " + LocalDate.now() + ".",
+                        buildSystemContext(user) + "\n" + buildDateContext(LocalDate.now()),
                         snapshot, new AgentToolCatalog().getSchemas());
             } catch (Exception e) {
                 raw = Optional.empty();
@@ -550,9 +552,9 @@ public class AgentService {
                     if (!type.isBlank()) {
                         sb.append(" ");
                     }
-                    sb.append(start);
+                    sb.append(formatDateWithWeekday(start));
                     if (!end.isBlank() && !end.equals(start)) {
-                        sb.append(" to ").append(end);
+                        sb.append(" to ").append(formatDateWithWeekday(end));
                     }
                 }
                 sb.append(")");
@@ -613,6 +615,34 @@ public class AgentService {
             return LocalDate.parse(text.trim());
         } catch (Exception e) {
             return null;
+        }
+    }
+
+    private static final DateTimeFormatter WEEKDAY_DATE_FORMAT =
+            DateTimeFormatter.ofPattern("EEEE, yyyy-MM-dd", Locale.ENGLISH);
+
+    public static String buildDateContext(LocalDate today) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("Today is ").append(capitalizeDay(today.getDayOfWeek())).append(", ").append(today).append(".\n");
+        sb.append("Upcoming days (use these EXACT dates when the user names a weekday):\n");
+        for (int i = 0; i < 14; i++) {
+            LocalDate d = today.plusDays(i);
+            sb.append("- ").append(capitalizeDay(d.getDayOfWeek())).append(" ").append(d).append("\n");
+        }
+        sb.append("If the named weekday already passed this week, assume NEXT week.");
+        return sb.toString();
+    }
+
+    private static String capitalizeDay(DayOfWeek day) {
+        String name = day.name();
+        return name.charAt(0) + name.substring(1).toLowerCase(Locale.ENGLISH);
+    }
+
+    private String formatDateWithWeekday(String isoDate) {
+        try {
+            return LocalDate.parse(isoDate.trim()).format(WEEKDAY_DATE_FORMAT);
+        } catch (Exception e) {
+            return isoDate;
         }
     }
 

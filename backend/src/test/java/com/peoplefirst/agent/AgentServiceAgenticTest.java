@@ -491,4 +491,28 @@ class AgentServiceAgenticTest {
         assertNotNull(response.getActionData());
         assertNotNull(response.getReply());
     }
+
+    @Test
+    void dateContextMapsWednesdayCorrectly() {
+        String ctx = AgentService.buildDateContext(LocalDate.of(2026, 9, 5));
+        assertTrue(ctx.contains("Saturday 2026-09-05"));
+        assertTrue(ctx.contains("Monday 2026-09-07"));
+        assertTrue(ctx.contains("Wednesday 2026-09-09"));
+    }
+
+    @Test
+    void applyProposalRendersWeekday() {
+        String args = "{\\\"leaveType\\\":\\\"SICK\\\",\\\"startDate\\\":\\\"2026-09-09\\\","
+                + "\\\"endDate\\\":\\\"2026-09-09\\\"}";
+        String toolCall = "{\"content\": null, \"tool_calls\": [{\"id\": \"c1\", \"type\": \"function\", "
+                + "\"function\": {\"name\": \"apply_leave\", \"arguments\": \"" + args + "\"}}]}";
+        when(genAiClient.chatWithTools(anyString(), anyList(), anyList()))
+                .thenReturn(Optional.of(toolCall));
+
+        AgentChatResponseDto proposal = agentService.processMessage(
+                new AgentChatRequestDto("i want wednesday off sick", "conv-weekday-a"));
+
+        assertFalse(proposal.isActionExecuted());
+        assertTrue(proposal.getReply().contains("Wednesday"));
+    }
 }
