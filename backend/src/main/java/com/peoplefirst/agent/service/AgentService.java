@@ -31,6 +31,11 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -942,7 +947,33 @@ public class AgentService {
         status.put("genAiConfigured", genAiClient.isConfigured());
         status.put("genAiModel", genAiClient.getModel());
         status.put("architecture", "Hybrid: Google Generative AI (Gemini) + Grounded Spring Boot Policy Engine");
+        status.put("agentMode", genAiClient.isConfigured() ? "agentic" : "rule-based");
+        String provider = genAiClient.getProvider();
+        status.put("genAiProvider", (provider != null && !provider.isBlank()) ? provider : "auto");
+        status.put("genAiEndpointReachable", probeGenAiEndpointReachable());
         return status;
+    }
+
+    private boolean probeGenAiEndpointReachable() {
+        try {
+            String baseUrl = genAiClient.getBaseUrl();
+            if (baseUrl == null || baseUrl.isBlank()) {
+                return false;
+            }
+            String url = baseUrl.trim().replaceAll("/+$", "") + "/models";
+            HttpClient client = HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofSeconds(3))
+                    .build();
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(url))
+                    .timeout(Duration.ofSeconds(3))
+                    .GET()
+                    .build();
+            HttpResponse<Void> response = client.send(request, HttpResponse.BodyHandlers.discarding());
+            return response.statusCode() == 200;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     public void updateGenAiKey(String apiKey) {

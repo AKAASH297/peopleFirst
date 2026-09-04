@@ -67,6 +67,16 @@ public class GenAiClient {
         return model;
     }
 
+    public String getBaseUrl() {
+        return (openAiBaseUrl != null && !openAiBaseUrl.trim().isEmpty())
+                ? openAiBaseUrl.trim()
+                : "https://api.openai.com/v1";
+    }
+
+    public String getProvider() {
+        return provider;
+    }
+
     public void setModel(String model) {
         this.model = model;
     }

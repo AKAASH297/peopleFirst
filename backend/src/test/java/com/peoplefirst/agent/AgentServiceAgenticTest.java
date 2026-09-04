@@ -94,4 +94,19 @@ class AgentServiceAgenticTest {
         AgentChatResponseDto response = agentService.processMessage(request);
         assertTrue(response.getReply().contains("Kura"));
     }
+
+    @Test
+    void statusReportsAgenticModeWithoutLeakingSecrets() {
+        when(genAiClient.isConfigured()).thenReturn(true);
+        Map<String, Object> status = agentService.getAgentStatus();
+        assertEquals("agentic", status.get("agentMode"));
+        assertFalse(status.values().stream().anyMatch(v -> "test-key-not-sk".equals(v)));
+    }
+
+    @Test
+    void statusReportsRuleBasedWhenUnconfigured() {
+        when(genAiClient.isConfigured()).thenReturn(false);
+        Map<String, Object> status = agentService.getAgentStatus();
+        assertEquals("rule-based", status.get("agentMode"));
+    }
 }
