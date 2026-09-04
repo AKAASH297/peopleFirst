@@ -23,6 +23,10 @@ import com.peoplefirst.wellbeing.dto.HospitalPartnerDto;
 import com.peoplefirst.wellbeing.dto.WellbeingSuggestionDto;
 import com.peoplefirst.wellbeing.service.WellbeingService;
 import com.peoplefirst.agent.client.GenAiClient;
+import com.peoplefirst.agent.tools.AgentTool;
+import com.peoplefirst.agent.tools.AgentToolCatalog;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
@@ -51,6 +55,10 @@ public class AgentService {
     // Multi-turn conversational leave draft store keyed by User UUID
     private final Map<UUID, PendingLeaveDraft> userDrafts = new ConcurrentHashMap<>();
 
+    // Agentic loop state: per-conversation message history and pending write confirmations
+    private final Map<String, List<Map<String, String>>> conversations = new ConcurrentHashMap<>();
+    private final Map<UUID, PendingAgentAction> pendingActions = new ConcurrentHashMap<>();
+
     public AgentService(IntentParser intentParser,
                         CurrentUserProvider currentUserProvider,
                         LeaveService leaveService,
@@ -73,6 +81,13 @@ public class AgentService {
         // Overriding rule: Identity comes strictly from SecurityContext -> DB
         User user = currentUserProvider.getCurrentUser();
         String message = request.getMessage() != null ? request.getMessage().trim() : "";
+        if (genAiClient.isConfigured()) {
+            return processAgentic(message, request.getConversationId(), user);
+        }
+        return processRuleBased(request, message, user);
+    }
+
+    private AgentChatResponseDto processRuleBased(AgentChatRequestDto request, String message, User user) {
         String lower = message.toLowerCase().trim();
 
         // 1. Manage active drafts
@@ -138,6 +153,255 @@ public class AgentService {
         }
     }
 
+    private AgentChatResponseDto processAgentic(String message, String conversationId, User user) {
+        String lower = message.toLowerCase().trim();
+
+        // Confirm-gate: resolve a pending write before calling the model
+        PendingAgentAction pending = pendingActions.get(user.getId());
+        if (pending != null && pending.isExpired()) {
+            pendingActions.remove(user.getId());
+            pending = null;
+        }
+        if (pending != null) {
+            if (lower.equals("yes") || lower.equals("confirm") || lower.equals("proceed")
+                    || lower.startsWith("yes") || lower.contains("confirm") || lower.contains("proceed")) {
+                pendingActions.remove(user.getId());
+                if (AgentTool.APPLY_LEAVE.getName().equals(pending.getToolName())) {
+                    return executeLeaveApplication(buildDraftFromArguments(pending.getArgumentsJson(), message), user);
+                }
+                return handleCancelLeave(message, user);
+            }
+            if (lower.equals("no") || lower.equals("cancel") || lower.equals("discard")
+                    || lower.startsWith("no") || lower.contains("cancel") || lower.contains("discard")) {
+                pendingActions.remove(user.getId());
+                AgentChatResponseDto cancelled = new AgentChatResponseDto(
+                        "Understood \u2014 I've discarded the pending action. Let me know if you need anything else!",
+                        AgentIntent.UNKNOWN.name());
+                cancelled.setQuickReplies(getPostActionQuickReplies(user));
+                return cancelled;
+            }
+        }
+
+        String convKey = (conversationId != null && !conversationId.isBlank()) ? conversationId : "default";
+        List<Map<String, String>> history =
+                conversations.computeIfAbsent(convKey, k -> new ArrayList<>());
+        appendToHistory(history, Map.of("role", "user", "content", message));
+
+        ObjectMapper mapper = new ObjectMapper();
+        AgentChatResponseDto lastToolResponse = null;
+
+        for (int turn = 0; turn < 5; turn++) {
+            List<Map<String, String>> snapshot = new ArrayList<>(history);
+            Optional<String> raw;
+            try {
+                raw = genAiClient.chatWithTools(
+                        buildSystemContext(user) + "\nToday is " + LocalDate.now() + ".",
+                        snapshot, new AgentToolCatalog().getSchemas());
+            } catch (Exception e) {
+                raw = Optional.empty();
+            }
+            if (raw.isEmpty()) {
+                return processRuleBased(new AgentChatRequestDto(message, conversationId), message, user);
+            }
+
+            JsonNode assistant;
+            try {
+                assistant = mapper.readTree(raw.get());
+            } catch (Exception e) {
+                return processRuleBased(new AgentChatRequestDto(message, conversationId), message, user);
+            }
+
+            String content = assistant.path("content").isNull()
+                    ? null : assistant.path("content").asText(null);
+            JsonNode toolCalls = assistant.path("tool_calls");
+            boolean hasTools = toolCalls.isArray() && toolCalls.size() > 0;
+
+            appendToHistory(history, Map.of("role", "assistant",
+                    "content", content != null ? content : ""));
+
+            if (!hasTools) {
+                if (lastToolResponse != null) {
+                    String reply = (content != null && !content.isBlank())
+                            ? content : lastToolResponse.getReply();
+                    AgentChatResponseDto merged = new AgentChatResponseDto(reply, lastToolResponse.getIntent());
+                    merged.setActionExecuted(true);
+                    merged.setActionName(lastToolResponse.getActionName());
+                    merged.setActionData(lastToolResponse.getActionData());
+                    merged.setWellbeingSuggestions(lastToolResponse.getWellbeingSuggestions());
+                    merged.setQuickReplies(lastToolResponse.getQuickReplies() != null
+                            ? lastToolResponse.getQuickReplies()
+                            : List.of("Check my balances", "Apply for leave", "Company leave policies", "Campus amenities"));
+                    return merged;
+                }
+                AgentChatResponseDto response = new AgentChatResponseDto(
+                        content != null ? content : "", AgentIntent.UNKNOWN.name());
+                response.setQuickReplies(
+                        List.of("Check my balances", "Apply for leave", "Company leave policies", "Campus amenities"));
+                return response;
+            }
+
+            for (JsonNode call : toolCalls) {
+                String callId = call.path("id").asText(null);
+                String toolCallId = callId != null ? callId : "";
+                JsonNode function = call.path("function");
+                String toolName = function.path("name").asText(null);
+                String argumentsJson = function.path("arguments").isNull()
+                        ? "{}" : function.path("arguments").asText("{}");
+
+                AgentTool tool;
+                try {
+                    tool = AgentTool.fromName(toolName);
+                } catch (IllegalArgumentException | NullPointerException e) {
+                    appendToHistory(history, Map.of("role", "tool",
+                            "tool_call_id", toolCallId, "content", "Unknown tool"));
+                    continue;
+                }
+
+                switch (tool) {
+                    case CHECK_BALANCE -> {
+                        AgentChatResponseDto toolResponse = handleCheckBalance(message, user);
+                        lastToolResponse = toolResponse;
+                        appendToHistory(history, Map.of("role", "tool",
+                                "tool_call_id", toolCallId, "content", toCompactJson(toolResponse.getActionData())));
+                    }
+                    case VIEW_LEAVES -> {
+                        AgentChatResponseDto toolResponse = handleViewLeaves(user);
+                        lastToolResponse = toolResponse;
+                        appendToHistory(history, Map.of("role", "tool",
+                                "tool_call_id", toolCallId, "content", toCompactJson(toolResponse.getActionData())));
+                    }
+                    case CHECK_POLICY -> {
+                        AgentChatResponseDto toolResponse = handleCheckPolicy(user);
+                        lastToolResponse = toolResponse;
+                        appendToHistory(history, Map.of("role", "tool",
+                                "tool_call_id", toolCallId, "content", toCompactJson(toolResponse.getActionData())));
+                    }
+                    case WELLBEING -> {
+                        AgentChatResponseDto toolResponse = handleWellbeingInquiry(message, user);
+                        lastToolResponse = toolResponse;
+                        appendToHistory(history, Map.of("role", "tool",
+                                "tool_call_id", toolCallId, "content", toCompactJson(toolResponse.getActionData())));
+                    }
+                    case TICKET_INQUIRY -> {
+                        AgentChatResponseDto toolResponse = handleTicketInquiry(user);
+                        lastToolResponse = toolResponse;
+                        appendToHistory(history, Map.of("role", "tool",
+                                "tool_call_id", toolCallId, "content", toCompactJson(toolResponse.getActionData())));
+                    }
+                    case APPLY_LEAVE, CANCEL_LEAVE -> {
+                        pendingActions.put(user.getId(), new PendingAgentAction(tool.getName(), argumentsJson));
+                        String intent = tool == AgentTool.APPLY_LEAVE
+                                ? AgentIntent.APPLY_LEAVE.name() : AgentIntent.CANCEL_LEAVE.name();
+                        AgentChatResponseDto confirm = new AgentChatResponseDto(
+                                "I've prepared " + summarizeArguments(tool, argumentsJson)
+                                        + ". Reply **yes** to confirm or **no** to discard.",
+                                intent);
+                        confirm.setActionExecuted(false);
+                        confirm.setQuickReplies(List.of("Yes, confirm", "No, discard"));
+                        return confirm;
+                    }
+                }
+            }
+        }
+
+        if (lastToolResponse != null) {
+            return lastToolResponse;
+        }
+        return processRuleBased(new AgentChatRequestDto(message, conversationId), message, user);
+    }
+
+    private void appendToHistory(List<Map<String, String>> history, Map<String, String> entry) {
+        history.add(entry);
+        while (history.size() > 20) {
+            history.remove(0);
+        }
+    }
+
+    private String toCompactJson(Object value) {
+        try {
+            return new ObjectMapper().writeValueAsString(value);
+        } catch (Exception e) {
+            return value != null ? value.toString() : "null";
+        }
+    }
+
+    private String summarizeArguments(AgentTool tool, String argumentsJson) {
+        if (tool == AgentTool.CANCEL_LEAVE) {
+            return "cancellation of your upcoming leave";
+        }
+        try {
+            JsonNode args = new ObjectMapper().readTree(argumentsJson != null ? argumentsJson : "{}");
+            String type = args.path("leaveType").asText("");
+            String start = args.path("startDate").asText("");
+            String end = args.path("endDate").asText("");
+            StringBuilder sb = new StringBuilder("your leave application");
+            if (!type.isBlank() || !start.isBlank()) {
+                sb.append(" (");
+                if (!type.isBlank()) {
+                    sb.append(type);
+                }
+                if (!start.isBlank()) {
+                    if (!type.isBlank()) {
+                        sb.append(" ");
+                    }
+                    sb.append(start);
+                    if (!end.isBlank() && !end.equals(start)) {
+                        sb.append(" to ").append(end);
+                    }
+                }
+                sb.append(")");
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            return "your leave application";
+        }
+    }
+
+    private PendingLeaveDraft buildDraftFromArguments(String argumentsJson, String message) {
+        PendingLeaveDraft draft = new PendingLeaveDraft();
+        try {
+            JsonNode args = new ObjectMapper().readTree(argumentsJson != null ? argumentsJson : "{}");
+            String typeText = args.path("leaveType").asText(null);
+            LeaveType type = (typeText != null && !typeText.isBlank())
+                    ? intentParser.extractLeaveType(typeText) : null;
+            if (type == null) {
+                type = intentParser.extractLeaveType(message);
+            }
+            LocalDate start = parseIsoDate(args.path("startDate").asText(null));
+            LocalDate end = parseIsoDate(args.path("endDate").asText(null));
+            if (start == null) {
+                LocalDate[] dates = intentParser.extractDates(message);
+                start = dates[0];
+                end = dates[1] != null ? dates[1] : dates[0];
+            }
+            if (end == null) {
+                end = start;
+            }
+            draft.setLeaveType(type);
+            draft.setStartDate(start);
+            draft.setEndDate(end);
+            draft.setHalfDay(args.path("halfDay").asBoolean(false) || intentParser.extractHalfDay(message));
+            draft.setDocAttached(intentParser.extractDocumentAttached(message));
+            String reason = args.path("reason").asText(null);
+            draft.setReason((reason != null && !reason.isBlank())
+                    ? reason : "Applied via Kura AI Agent: " + message);
+        } catch (Exception e) {
+            draft.setReason("Applied via Kura AI Agent: " + message);
+        }
+        return draft;
+    }
+
+    private LocalDate parseIsoDate(String text) {
+        if (text == null || text.isBlank()) {
+            return null;
+        }
+        try {
+            return LocalDate.parse(text.trim());
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     private String buildSystemContext(User user) {
         StringBuilder sb = new StringBuilder();
         sb.append("You are Kura, the intelligent AI Leave Management & Wellbeing Concierge for peopleFirst.\n");
@@ -194,10 +458,15 @@ public class AgentService {
         return response;
     }
 
-    private AgentChatResponseDto handleCheckBalance(String message, User user) {
+    private List<LeaveBalance> fetchBalances(User user) {
         int year = LocalDate.now().getYear();
         leaveBalanceService.initializeUserBalancesIfAbsent(user, year);
-        List<LeaveBalance> balances = leaveBalanceService.getUserBalances(user.getId(), year);
+        return leaveBalanceService.getUserBalances(user.getId(), year);
+    }
+
+    private AgentChatResponseDto handleCheckBalance(String message, User user) {
+        int year = LocalDate.now().getYear();
+        List<LeaveBalance> balances = fetchBalances(user);
 
         LeaveType requestedType = intentParser.extractLeaveType(message);
         StringBuilder sb = new StringBuilder();
@@ -711,5 +980,23 @@ public class AgentService {
         public void setDocAttached(boolean docAttached) { this.docAttached = docAttached; }
         public String getReason() { return reason; }
         public void setReason(String reason) { this.reason = reason; }
+    }
+
+    private static class PendingAgentAction {
+        private final String toolName;
+        private final String argumentsJson;
+        private final long createdAt = System.currentTimeMillis();
+
+        PendingAgentAction(String toolName, String argumentsJson) {
+            this.toolName = toolName;
+            this.argumentsJson = argumentsJson;
+        }
+
+        boolean isExpired() {
+            return (System.currentTimeMillis() - createdAt) > (15 * 60 * 1000L); // 15 mins expiry
+        }
+
+        String getToolName() { return toolName; }
+        String getArgumentsJson() { return argumentsJson; }
     }
 }
