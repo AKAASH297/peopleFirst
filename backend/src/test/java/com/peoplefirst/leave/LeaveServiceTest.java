@@ -16,6 +16,7 @@ import com.peoplefirst.leave.service.LeaveService;
 import com.peoplefirst.leave.validator.LeaveValidator;
 import com.peoplefirst.policy.entity.LeaveType;
 import com.peoplefirst.policy.validator.PolicyValidator;
+import com.peoplefirst.policy.validator.PolicyViolationException;
 import com.peoplefirst.user.entity.Role;
 import com.peoplefirst.user.entity.User;
 import com.peoplefirst.user.service.UserService;
@@ -26,6 +27,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -52,7 +54,7 @@ class LeaveServiceTest {
         leaveRequestRepository = Mockito.mock(LeaveRequestRepository.class);
         leaveBalanceService = Mockito.mock(LeaveBalanceService.class);
         policyValidator = new PolicyValidator();
-        leaveValidator = new LeaveValidator();
+        leaveValidator = new LeaveValidator(leaveRequestRepository);
         leaveMapper = new LeaveMapper();
         auditService = Mockito.mock(AuditService.class);
         userService = Mockito.mock(UserService.class);
@@ -193,5 +195,159 @@ class LeaveServiceTest {
                 eq(leaveId), eq(employee.getId()), eq(employee.getFullName()), eq("EMPLOYEE"),
                 eq("EDIT"), eq("RETURNED"), eq("PENDING"), anyString(), eq(false), eq(false)
         );
+    }
+
+    @Test
+    @DisplayName("Second same-day apply after approval is rejected")
+    void testSameDayDoubleBookingRejected() {
+        LocalDate day = LocalDate.of(2026, 10, 5);
+        LeaveRequest existing = new LeaveRequest(
+                employee.getId(), LeaveType.SICK, null,
+                day, day, 1.0,
+                false, null, "Flu", null, false, LocalDate.now()
+        );
+        existing.setId(UUID.randomUUID());
+        existing.setStatus(LeaveStatus.APPROVED);
+
+        when(leaveRequestRepository.findByUserIdAndStatusInAndStartDateLessThanEqualAndEndDateGreaterThanEqual(
+                eq(employee.getId()), eq(List.of(LeaveStatus.PENDING, LeaveStatus.APPROVED)), eq(day), eq(day)))
+                .thenReturn(List.of(existing));
+        when(leaveRequestRepository.save(any())).thenAnswer(invocation -> {
+            LeaveRequest req = invocation.getArgument(0);
+            req.setId(UUID.randomUUID());
+            return req;
+        });
+
+        CreateLeaveRequestDto dto = new CreateLeaveRequestDto();
+        dto.setLeaveType(LeaveType.SICK);
+        dto.setStartDate(day);
+        dto.setEndDate(day);
+        dto.setReason("Still sick");
+
+        assertThrows(PolicyViolationException.class, () -> leaveService.applyLeave(dto, employee));
+    }
+
+    @Test
+    @DisplayName("Overlapping PENDING leave blocks a second apply")
+    void testPendingOverlapRejected() {
+        LocalDate day = LocalDate.of(2026, 10, 5);
+        LeaveRequest existing = new LeaveRequest(
+                employee.getId(), LeaveType.SICK, null,
+                day, day, 1.0,
+                false, null, "Flu", null, false, LocalDate.now()
+        );
+        existing.setId(UUID.randomUUID());
+        existing.setStatus(LeaveStatus.PENDING);
+
+        when(leaveRequestRepository.findByUserIdAndStatusInAndStartDateLessThanEqualAndEndDateGreaterThanEqual(
+                eq(employee.getId()), eq(List.of(LeaveStatus.PENDING, LeaveStatus.APPROVED)), eq(day), eq(day)))
+                .thenReturn(List.of(existing));
+        when(leaveRequestRepository.save(any())).thenAnswer(invocation -> {
+            LeaveRequest req = invocation.getArgument(0);
+            req.setId(UUID.randomUUID());
+            return req;
+        });
+
+        CreateLeaveRequestDto dto = new CreateLeaveRequestDto();
+        dto.setLeaveType(LeaveType.SICK);
+        dto.setStartDate(day);
+        dto.setEndDate(day);
+        dto.setReason("Second application");
+
+        assertThrows(PolicyViolationException.class, () -> leaveService.applyLeave(dto, employee));
+    }
+
+    @Test
+    @DisplayName("Complementary half-day sessions on the same day are allowed")
+    void testComplementaryHalfDaysAllowed() {
+        LocalDate day = LocalDate.of(2026, 10, 6);
+        LeaveRequest existing = new LeaveRequest(
+                employee.getId(), LeaveType.SICK, null,
+                day, day, 0.5,
+                true, "FIRST_HALF", "Morning fever", null, false, LocalDate.now()
+        );
+        existing.setId(UUID.randomUUID());
+        existing.setStatus(LeaveStatus.APPROVED);
+
+        when(leaveRequestRepository.findByUserIdAndStatusInAndStartDateLessThanEqualAndEndDateGreaterThanEqual(
+                eq(employee.getId()), eq(List.of(LeaveStatus.PENDING, LeaveStatus.APPROVED)), eq(day), eq(day)))
+                .thenReturn(List.of(existing));
+        when(leaveRequestRepository.save(any())).thenAnswer(invocation -> {
+            LeaveRequest req = invocation.getArgument(0);
+            req.setId(UUID.randomUUID());
+            return req;
+        });
+
+        CreateLeaveRequestDto dto = new CreateLeaveRequestDto();
+        dto.setLeaveType(LeaveType.SICK);
+        dto.setStartDate(day);
+        dto.setEndDate(day);
+        dto.setHalfDay(true);
+        dto.setHalfDaySession("SECOND_HALF");
+        dto.setReason("Afternoon rest");
+
+        LeaveResponseDto result = leaveService.applyLeave(dto, employee);
+
+        assertNotNull(result);
+        assertEquals(LeaveStatus.PENDING, result.getStatus());
+    }
+
+    @Test
+    @DisplayName("Same half-day session twice is rejected")
+    void testSameHalfDaySessionRejected() {
+        LocalDate day = LocalDate.of(2026, 10, 6);
+        LeaveRequest existing = new LeaveRequest(
+                employee.getId(), LeaveType.SICK, null,
+                day, day, 0.5,
+                true, "FIRST_HALF", "Morning fever", null, false, LocalDate.now()
+        );
+        existing.setId(UUID.randomUUID());
+        existing.setStatus(LeaveStatus.APPROVED);
+
+        when(leaveRequestRepository.findByUserIdAndStatusInAndStartDateLessThanEqualAndEndDateGreaterThanEqual(
+                eq(employee.getId()), eq(List.of(LeaveStatus.PENDING, LeaveStatus.APPROVED)), eq(day), eq(day)))
+                .thenReturn(List.of(existing));
+        when(leaveRequestRepository.save(any())).thenAnswer(invocation -> {
+            LeaveRequest req = invocation.getArgument(0);
+            req.setId(UUID.randomUUID());
+            return req;
+        });
+
+        CreateLeaveRequestDto dto = new CreateLeaveRequestDto();
+        dto.setLeaveType(LeaveType.SICK);
+        dto.setStartDate(day);
+        dto.setEndDate(day);
+        dto.setHalfDay(true);
+        dto.setHalfDaySession("FIRST_HALF");
+        dto.setReason("Duplicate morning session");
+
+        assertThrows(PolicyViolationException.class, () -> leaveService.applyLeave(dto, employee));
+    }
+
+    @Test
+    @DisplayName("Cancelled/rejected leaves do not block")
+    void testCancelledLeavesDoNotBlock() {
+        LocalDate day = LocalDate.of(2026, 10, 5);
+        // The overlap query filters statuses to PENDING/APPROVED only, so a day
+        // holding just a CANCELLED full-day leave yields no clashes.
+        when(leaveRequestRepository.findByUserIdAndStatusInAndStartDateLessThanEqualAndEndDateGreaterThanEqual(
+                eq(employee.getId()), eq(List.of(LeaveStatus.PENDING, LeaveStatus.APPROVED)), eq(day), eq(day)))
+                .thenReturn(List.of());
+        when(leaveRequestRepository.save(any())).thenAnswer(invocation -> {
+            LeaveRequest req = invocation.getArgument(0);
+            req.setId(UUID.randomUUID());
+            return req;
+        });
+
+        CreateLeaveRequestDto dto = new CreateLeaveRequestDto();
+        dto.setLeaveType(LeaveType.SICK);
+        dto.setStartDate(day);
+        dto.setEndDate(day);
+        dto.setReason("Fresh application after cancellation");
+
+        LeaveResponseDto result = leaveService.applyLeave(dto, employee);
+
+        assertNotNull(result);
+        assertEquals(LeaveStatus.PENDING, result.getStatus());
     }
 }

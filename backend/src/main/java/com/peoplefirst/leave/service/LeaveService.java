@@ -51,6 +51,7 @@ public class LeaveService {
     @Transactional
     public LeaveResponseDto applyLeave(CreateLeaveRequestDto dto, User user) {
         double totalDays = leaveValidator.calculateTotalDays(dto.getStartDate(), dto.getEndDate(), dto.isHalfDay());
+        leaveValidator.validateNoOverlap(user.getId(), dto.getStartDate(), dto.getEndDate(), dto.isHalfDay(), dto.getHalfDaySession(), null);
 
         // Validate policy constraints
         policyValidator.validateLeaveApplication(
@@ -161,6 +162,7 @@ public class LeaveService {
         policyValidator.validateActionBeforeStartDate(leaveRequest.getStartDate(), "edit");
 
         double newTotalDays = leaveValidator.calculateTotalDays(dto.getStartDate(), dto.getEndDate(), dto.isHalfDay());
+        leaveValidator.validateNoOverlap(user.getId(), dto.getStartDate(), dto.getEndDate(), dto.isHalfDay(), dto.getHalfDaySession(), leaveId);
 
         // Validate new policy requirements
         policyValidator.validateLeaveApplication(
