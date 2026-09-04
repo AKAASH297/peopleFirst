@@ -14,7 +14,7 @@ export const LeaveHistory = {
       <div class="view-header">
         <div>
           <h2 class="view-title">My Leave History</h2>
-          <p class="view-subtitle">Review, edit returned leaves, cancel upcoming leaves, or view transition audit logs.</p>
+          <p class="view-subtitle">Review, edit returned leaves, and cancel upcoming leaves.</p>
         </div>
         <div class="flex items-center gap-2">
           <select id="leaveStatusFilter" class="form-select" style="width: auto; padding: 0.375rem 0.75rem;">
@@ -92,24 +92,18 @@ export const LeaveHistory = {
       const canCancel = (l.status === 'PENDING' || l.status === 'APPROVED') && isBeforeStart;
       const canEdit = (l.status === 'PENDING' || l.status === 'RETURNED') && isBeforeStart;
 
-      const actions = `
-        <div class="flex items-center gap-2" style="justify-content: flex-end;">
-          <button class="btn btn-outline btn-sm history-details-btn" data-id="${l.id}">Audit Trail</button>
-          ${canEdit ? `<button class="btn btn-secondary btn-sm history-edit-btn" data-id="${l.id}">Edit</button>` : ''}
-          ${canCancel ? `<button class="btn btn-danger btn-sm history-cancel-btn" data-id="${l.id}">Cancel</button>` : ''}
-        </div>
-      `;
+      const actionsList = [];
+      if (canEdit) actionsList.push(`<button class="btn btn-secondary btn-sm history-edit-btn" data-id="${l.id}">Edit</button>`);
+      if (canCancel) actionsList.push(`<button class="btn btn-danger btn-sm history-cancel-btn" data-id="${l.id}">Cancel</button>`);
+
+      const actions = actionsList.length
+        ? `<div class="flex items-center gap-2" style="justify-content: flex-end;">${actionsList.join('')}</div>`
+        : `<span style="color:var(--text-muted); font-size:0.8125rem;">—</span>`;
 
       return LeaveCard.renderLeaveRow(l, actions);
     }).join('');
 
     // Attach row events
-    document.querySelectorAll('.history-details-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const leave = this.allLeaves.find(l => l.id === btn.getAttribute('data-id'));
-        if (leave) this.showDetailsModal(leave);
-      });
-    });
 
     document.querySelectorAll('.history-cancel-btn').forEach(btn => {
       btn.addEventListener('click', () => {

@@ -27,6 +27,10 @@ export const DateUtils = {
     return this.formatDateISO(new Date());
   },
 
+  getTomorrowStr() {
+    return this.formatDateISO(this.addDays(new Date(), 1));
+  },
+
   formatDate(dateStr) {
     if (!dateStr) return '—';
     const d = this.parseLocalDate(dateStr);
@@ -44,16 +48,32 @@ export const DateUtils = {
     });
   },
 
+  isWeekend(dateStr) {
+    if (!dateStr) return false;
+    const d = this.parseLocalDate(dateStr);
+    if (!d || isNaN(d.getTime())) return false;
+    const day = d.getDay();
+    return day === 0 || day === 6; // 0 = Sunday, 6 = Saturday
+  },
+
   calculateDays(startDateStr, endDateStr, isHalfDay = false) {
     if (!startDateStr || !endDateStr) return 0;
     if (isHalfDay) return 0.5;
-    const p1 = startDateStr.split('-').map(Number);
-    const p2 = endDateStr.split('-').map(Number);
-    if (p1.length !== 3 || p2.length !== 3 || isNaN(p1[0]) || isNaN(p2[0])) return 0;
-    const utc1 = Date.UTC(p1[0], p1[1] - 1, p1[2]);
-    const utc2 = Date.UTC(p2[0], p2[1] - 1, p2[2]);
-    if (utc2 < utc1) return 0;
-    return Math.round((utc2 - utc1) / (1000 * 60 * 60 * 24)) + 1;
+    const d1 = this.parseLocalDate(startDateStr);
+    const d2 = this.parseLocalDate(endDateStr);
+    if (!d1 || !d2 || isNaN(d1.getTime()) || isNaN(d2.getTime())) return 0;
+    if (d2 < d1) return 0;
+
+    let workingDays = 0;
+    let curr = new Date(d1.getTime());
+    while (curr <= d2) {
+      const day = curr.getDay();
+      if (day !== 0 && day !== 6) {
+        workingDays++;
+      }
+      curr.setDate(curr.getDate() + 1);
+    }
+    return workingDays;
   },
 
   isBeforeToday(dateStr) {

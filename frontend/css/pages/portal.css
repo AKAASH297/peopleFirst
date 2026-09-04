@@ -105,16 +105,42 @@
 
 /* Contractor screen */
 .contractor-container {
-  max-width: 750px;
-  margin: 2rem auto;
-  height: calc(100vh - 4rem);
+  max-width: 1120px;
+  margin: 1.5rem auto;
+  height: calc(100vh - 3rem);
   display: flex;
   flex-direction: column;
   background: #fff;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-md);
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.08), 0 8px 10px -6px rgba(0, 0, 0, 0.05);
   overflow: hidden;
+}
+
+.contractor-layout {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  height: calc(100% - 65px);
+  overflow: hidden;
+}
+
+.contractor-sidebar {
+  border-left: 1px solid var(--border);
+  background: #f8fafc;
+  padding: 1.25rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+@media (max-width: 900px) {
+  .contractor-layout {
+    grid-template-columns: 1fr;
+  }
+  .contractor-sidebar {
+    display: none;
+  }
 }
 
 @media (max-width: 768px) {

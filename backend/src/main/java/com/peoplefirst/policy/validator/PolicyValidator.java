@@ -30,11 +30,16 @@ public class PolicyValidator {
             throw new PolicyViolationException("End date cannot be earlier than start date.");
         }
 
-        // SPEC.md §5: Apply / cancel / edit leave before the actual leave date.
-        // Leave cannot be applied normally after the leave date has already passed.
-        if (startDate.isBefore(appliedDate)) {
-            throw new PolicyViolationException(
-                    "Leave cannot be applied retroactively after the leave date has passed. Please raise a support ticket instead.");
+        // Requirement: Apply, cancle, update before actual leave date.
+        // Leave cannot be applied on or after the leave date has arrived (cannot apply for today or backdate).
+        if (!startDate.isAfter(appliedDate)) {
+            throw new PolicyViolationException("You can't apply leave for backdate.");
+        }
+
+        // Weekend restriction: leaves cannot start or end on Saturday or Sunday
+        if (startDate.getDayOfWeek() == DayOfWeek.SATURDAY || startDate.getDayOfWeek() == DayOfWeek.SUNDAY ||
+                endDate.getDayOfWeek() == DayOfWeek.SATURDAY || endDate.getDayOfWeek() == DayOfWeek.SUNDAY) {
+            throw new PolicyViolationException("Leaves cannot be applied on weekends (Saturday or Sunday). Please select working days (Monday to Friday).");
         }
 
         // SPEC.md §2: Role eligibility

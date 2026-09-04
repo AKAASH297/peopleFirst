@@ -1,14 +1,19 @@
 package com.peoplefirst.wellbeing.service;
 
 import com.peoplefirst.leave.entity.LeaveRequest;
+import com.peoplefirst.policy.entity.LeaveType;
 import com.peoplefirst.user.entity.User;
 import com.peoplefirst.wellbeing.dto.AmenityDto;
 import com.peoplefirst.wellbeing.dto.HospitalPartnerDto;
 import com.peoplefirst.wellbeing.dto.ResortPartnerDto;
+import com.peoplefirst.wellbeing.dto.VacationEmailDto;
+import com.peoplefirst.wellbeing.dto.WeeklyWellbeingDto;
 import com.peoplefirst.wellbeing.dto.WellbeingSuggestionDto;
 import com.peoplefirst.wellbeing.rules.*;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -115,5 +120,81 @@ public class WellbeingService {
 
     public WellbeingSuggestionDto checkVacationNudge(User user, boolean hasTakenLeaveInLastQuarter) {
         return vacationNudgeRule.evaluate(user, hasTakenLeaveInLastQuarter, resorts);
+    }
+
+    public VacationEmailDto sendVacationNudgeEmail(User user) {
+        String subject = "🌿 Time for a Well-Deserved Break! Vacation & Wellbeing Perks for " + user.getFullName();
+        StringBuilder content = new StringBuilder();
+        content.append("Hi ").append(user.getFullName()).append(",\n\n")
+                .append("Our AI Wellbeing Concierge noticed that you haven't taken any time off in the last quarter (90 days).\n")
+                .append("Taking regular pauses prevents burnout and helps sustain creativity and energy.\n\n")
+                .append("To help you recharge, here are company-partnered resorts and getaways offering up to 25% exclusive corporate discounts:\n\n");
+
+        for (ResortPartnerDto r : resorts) {
+            content.append("• ").append(r.getName()).append(" (").append(r.getDestination()).append(" — ").append(r.getType()).append(")\n")
+                    .append("   Discount: ").append(r.getDiscount()).append(" | Promo Code: ").append(r.getCouponCode()).append("\n\n");
+        }
+
+        content.append("Log into peopleFirst today to plan your break. Your wellbeing is our top priority!\n\n")
+                .append("Warm regards,\npeopleFirst People & Wellbeing Team");
+
+        return new VacationEmailDto(
+                user.getEmail(),
+                user.getFullName(),
+                subject,
+                content.toString(),
+                LocalDateTime.now(),
+                resorts
+        );
+    }
+
+    public WeeklyWellbeingDto getWeeklyWellbeingReport(User user, List<LeaveRequest> userLeaves) {
+        WeeklyWellbeingDto dto = new WeeklyWellbeingDto();
+        dto.setEmployeeName(user.getFullName());
+        dto.setBaseLocation(user.getBaseLocation());
+
+        LocalDate now = LocalDate.now();
+        LocalDate thirtyDaysAgo = now.minusDays(30);
+        LocalDate ninetyDaysAgo = now.minusDays(90);
+
+        List<LeaveRequest> nonNullLeaves = userLeaves != null ? userLeaves : List.of();
+
+        long monthCount = nonNullLeaves.stream()
+                .filter(l -> l.getStartDate() != null && !l.getStartDate().isBefore(thirtyDaysAgo))
+                .count();
+
+        long quarterCount = nonNullLeaves.stream()
+                .filter(l -> l.getStartDate() != null && !l.getStartDate().isBefore(ninetyDaysAgo))
+                .count();
+
+        dto.setLeavesTakenThisMonth(monthCount);
+        dto.setLeavesTakenLastQuarter(quarterCount);
+
+        boolean hasRecentSick = nonNullLeaves.stream()
+                .anyMatch(l -> l.getLeaveType() == LeaveType.SICK && l.getStartDate() != null && !l.getStartDate().isBefore(ninetyDaysAgo));
+        dto.setRecentSickLeave(hasRecentSick);
+
+        if (hasRecentSick) {
+            dto.setOpdClaimReminder("You have taken sick leave in the last 90 days. Remember to submit your OPD or hospitalization bills within the 90-day claim window to ensure complete insurance reimbursement.");
+            dto.setSuggestedHospitals(getHospitalPartners(user.getBaseLocation()));
+        }
+
+        dto.setInsuranceClaimsPortalUrl("https://insurance.peoplefirst.internal/claims");
+        dto.setRecommendedAmenities(amenities);
+
+        if (quarterCount == 0) {
+            dto.setVacationNudge(true);
+            dto.setStatus("RECHARGE_RECOMMENDED");
+            dto.setSummary("You have not taken any time off in the last 90 days. Taking regular breaks prevents burnout and sustains creativity. Explore our partner resorts with exclusive corporate discounts!");
+            dto.setSuggestedResorts(resorts);
+        } else if (hasRecentSick) {
+            dto.setStatus("ACTION_REQUIRED");
+            dto.setSummary("Recent medical recovery tracked. Please ensure you submit any OPD/hospital bills within 90 days and take advantage of our on-campus rest pods.");
+        } else {
+            dto.setStatus("HEALTHY");
+            dto.setSummary("Your wellbeing balance is on track! Keep taking scheduled pauses and exploring our on-campus wellness amenities.");
+        }
+
+        return dto;
     }
 }

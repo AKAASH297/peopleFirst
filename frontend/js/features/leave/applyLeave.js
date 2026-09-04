@@ -147,9 +147,9 @@ export const ApplyLeave = {
     const form = document.getElementById('applyLeaveForm');
     const alertEl = document.getElementById('applyAlert');
 
-    const todayStr = DateUtils.getTodayStr();
-    startDateEl.min = todayStr;
-    endDateEl.min = todayStr;
+    const tomorrowStr = DateUtils.getTomorrowStr();
+    startDateEl.min = tomorrowStr;
+    endDateEl.min = tomorrowStr;
 
     const openPickerSafe = (inputEl) => {
       try {
@@ -211,7 +211,7 @@ export const ApplyLeave = {
         startDateEl.min = minPaid;
         noticeEl.innerHTML = `<span style="color:#d97706;">⚠️ Paid Leave requires advance notice of more than 2 days (earliest start: ${DateUtils.formatDate(minPaid)}).</span>`;
       } else {
-        startDateEl.min = todayStr;
+        startDateEl.min = tomorrowStr;
         if (type === 'VOLUNTEERING') {
           noticeEl.innerHTML = '<span style="color:#059669;">🌿 Volunteering triggers corporate CSR chapter enrollment recommendations!</span>';
         } else {
@@ -222,7 +222,7 @@ export const ApplyLeave = {
       if (start) {
         endDateEl.min = start;
       } else {
-        endDateEl.min = todayStr;
+        endDateEl.min = tomorrowStr;
       }
 
       // Show/hide combination option if Casual or WFH

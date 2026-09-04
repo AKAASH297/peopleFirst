@@ -69,6 +69,20 @@ public class LeaveService {
                 LocalDate.now()
         );
 
+        // Validate no overlap with active leaves (PENDING or APPROVED)
+        List<LeaveRequest> activeLeaves = leaveRequestRepository.findByUserIdAndStatusIn(
+                user.getId(),
+                List.of(LeaveStatus.PENDING, LeaveStatus.APPROVED)
+        );
+        leaveValidator.validateNoDateOverlap(
+                activeLeaves,
+                null,
+                dto.getStartDate(),
+                dto.getEndDate(),
+                dto.isHalfDay(),
+                dto.getHalfDaySession()
+        );
+
         // Reserve pending balance
         leaveBalanceService.reservePendingDays(user, dto.getLeaveType(), totalDays, dto.getStartDate().getYear());
 
@@ -128,6 +142,11 @@ public class LeaveService {
     }
 
     @Transactional(readOnly = true)
+    public List<LeaveRequest> getLeaveEntitiesForUser(UUID userId) {
+        return leaveRequestRepository.findByUserIdOrderByCreatedAtDesc(userId);
+    }
+
+    @Transactional(readOnly = true)
     public List<LeaveResponseDto> getLeavesForUsers(List<UUID> userIds) {
         return leaveRequestRepository.findByUserIdInOrderByCreatedAtDesc(userIds).stream()
                 .map(req -> {
@@ -181,6 +200,20 @@ public class LeaveService {
                 dto.isDocumentAttached(),
                 dto.getDocumentUrl(),
                 LocalDate.now()
+        );
+
+        // Validate no overlap with other active leaves (excluding this leave)
+        List<LeaveRequest> activeLeaves = leaveRequestRepository.findByUserIdAndStatusIn(
+                user.getId(),
+                List.of(LeaveStatus.PENDING, LeaveStatus.APPROVED)
+        );
+        leaveValidator.validateNoDateOverlap(
+                activeLeaves,
+                leaveId,
+                dto.getStartDate(),
+                dto.getEndDate(),
+                dto.isHalfDay(),
+                dto.getHalfDaySession()
         );
 
         // Adjust pending balance

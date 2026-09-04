@@ -19,6 +19,13 @@ public class CreateTicketRequestDto {
     public CreateTicketRequestDto() {
     }
 
+    public CreateTicketRequestDto(String ticketType, String subject, String description, UUID relatedLeaveId) {
+        this.ticketType = ticketType;
+        this.subject = subject;
+        this.description = description;
+        this.relatedLeaveId = relatedLeaveId;
+    }
+
     public String getTicketType() {
         return ticketType;
     }

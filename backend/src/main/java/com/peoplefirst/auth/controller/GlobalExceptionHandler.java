@@ -39,6 +39,14 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(AccessDeniedException.class)
     public ResponseEntity<Map<String, Object>> handleAccessDenied(AccessDeniedException ex) {
+        if (ex.getMessage() != null && ex.getMessage().contains("User is not authenticated")) {
+            Map<String, Object> error = new HashMap<>();
+            error.put("timestamp", LocalDateTime.now());
+            error.put("status", HttpStatus.UNAUTHORIZED.value());
+            error.put("error", "Unauthorized");
+            error.put("message", ex.getMessage());
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(error);
+        }
         Map<String, Object> error = new HashMap<>();
         error.put("timestamp", LocalDateTime.now());
         error.put("status", HttpStatus.FORBIDDEN.value());

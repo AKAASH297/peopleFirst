@@ -171,10 +171,12 @@ class LeaveServiceTest {
     @DisplayName("Returned leave can be edited and resubmitted to PENDING")
     void testReturnedLeaveEditAndResubmit() {
         UUID leaveId = UUID.randomUUID();
+        LocalDate origStart = LocalDate.of(2026, 9, 8);
+        LocalDate origEnd = LocalDate.of(2026, 9, 9);
         LeaveRequest returnedLeave = new LeaveRequest(
                 employee.getId(), LeaveType.CASUAL, null,
-                LocalDate.now().plusDays(5), LocalDate.now().plusDays(6), 2.0,
-                false, null, "Original reason", null, false, LocalDate.now()
+                origStart, origEnd, 2.0,
+                false, null, "Original reason", null, false, LocalDate.of(2026, 9, 7)
         );
         returnedLeave.setId(leaveId);
         returnedLeave.setStatus(LeaveStatus.RETURNED);
@@ -184,8 +186,8 @@ class LeaveServiceTest {
 
         UpdateLeaveRequestDto editDto = new UpdateLeaveRequestDto();
         editDto.setLeaveType(LeaveType.CASUAL);
-        editDto.setStartDate(LocalDate.now().plusDays(6));
-        editDto.setEndDate(LocalDate.now().plusDays(7));
+        editDto.setStartDate(LocalDate.of(2026, 9, 9));
+        editDto.setEndDate(LocalDate.of(2026, 9, 10));
         editDto.setReason("Updated dates per manager feedback");
 
         LeaveResponseDto result = leaveService.editLeave(leaveId, editDto, employee);

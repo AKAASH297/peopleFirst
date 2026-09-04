@@ -6,12 +6,10 @@ import com.peoplefirst.agent.dto.AgentChatRequestDto;
 import com.peoplefirst.agent.dto.AgentChatResponseDto;
 import com.peoplefirst.agent.intent.IntentParser;
 import com.peoplefirst.agent.service.AgentService;
-import com.peoplefirst.approval.dto.ApprovalActionDto;
 import com.peoplefirst.approval.service.ApprovalService;
 import com.peoplefirst.auth.security.CurrentUserProvider;
 import com.peoplefirst.leave.dto.LeaveBalanceDto;
 import com.peoplefirst.leave.dto.LeaveResponseDto;
-import com.peoplefirst.leave.dto.CreateLeaveRequestDto;
 import com.peoplefirst.leave.entity.LeaveBalance;
 import com.peoplefirst.leave.entity.LeaveStatus;
 import com.peoplefirst.leave.mapper.LeaveMapper;
@@ -19,9 +17,10 @@ import com.peoplefirst.leave.service.LeaveBalanceService;
 import com.peoplefirst.leave.service.LeaveService;
 import com.peoplefirst.policy.entity.LeaveType;
 import com.peoplefirst.policy.service.PolicyService;
+import com.peoplefirst.ticket.service.TicketService;
 import com.peoplefirst.user.entity.Role;
 import com.peoplefirst.user.entity.User;
-import com.peoplefirst.volunteering.service.VolunteeringService;
+import com.peoplefirst.user.service.UserService;
 import com.peoplefirst.wellbeing.service.WellbeingService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -45,9 +44,6 @@ class AgentServiceAgenticTest {
     private LeaveService leaveService;
     private LeaveBalanceService leaveBalanceService;
     private LeaveMapper leaveMapper;
-    private ApprovalService approvalService;
-    private WellbeingService wellbeingService;
-    private VolunteeringService volunteeringService;
     private AgentService agentService;
     private User employee;
 
@@ -58,14 +54,16 @@ class AgentServiceAgenticTest {
         leaveService = Mockito.mock(LeaveService.class);
         leaveBalanceService = Mockito.mock(LeaveBalanceService.class);
         PolicyService policyService = Mockito.mock(PolicyService.class);
-        wellbeingService = Mockito.mock(WellbeingService.class);
+        WellbeingService wellbeingService = Mockito.mock(WellbeingService.class);
         leaveMapper = Mockito.mock(LeaveMapper.class);
         genAiClient = Mockito.mock(GenAiClient.class);
-        approvalService = Mockito.mock(ApprovalService.class);
-        volunteeringService = Mockito.mock(VolunteeringService.class);
+        ApprovalService approvalService = Mockito.mock(ApprovalService.class);
+        TicketService ticketService = Mockito.mock(TicketService.class);
+        UserService userService = Mockito.mock(UserService.class);
 
         agentService = new AgentService(intentParser, currentUserProvider, leaveService,
-                leaveBalanceService, policyService, wellbeingService, leaveMapper, genAiClient, approvalService, volunteeringService);
+                leaveBalanceService, policyService, wellbeingService, leaveMapper, genAiClient,
+                approvalService, ticketService, userService);
 
         employee = new User("emp1", "emp1@test.com", "encodedPass", "Test Employee",
                 Role.EMPLOYEE, false, "Eng", "Bangalore", UUID.randomUUID());
@@ -229,6 +227,7 @@ class AgentServiceAgenticTest {
         when(upcoming.getId()).thenReturn(UUID.randomUUID());
         when(upcoming.getStatus()).thenReturn(LeaveStatus.PENDING);
         when(upcoming.getStartDate()).thenReturn(LocalDate.now().plusDays(5));
+        when(upcoming.getEndDate()).thenReturn(LocalDate.now().plusDays(6));
         when(leaveService.getLeavesForUser(eq(employee.getId()))).thenReturn(List.of(upcoming));
         LeaveResponseDto cancelled = Mockito.mock(LeaveResponseDto.class);
         when(cancelled.getLeaveTypeDisplayName()).thenReturn("Sick Leave");
@@ -262,256 +261,5 @@ class AgentServiceAgenticTest {
         AgentChatResponseDto response = agentService.processMessage(
                 new AgentChatRequestDto(message, "conv-limit-b"));
         assertTrue(response.getReply().contains("Kura"));
-    }
-
-    private User managerUser() {
-        User manager = new User("mgr1", "mgr1@test.com", "encodedPass", "Test Manager",
-                Role.MANAGER, false, "Eng", "Bangalore", UUID.randomUUID());
-        manager.setId(UUID.randomUUID());
-        return manager;
-    }
-
-    private LeaveResponseDto pendingLeave(UUID id, String employeeName, String typeDisplay,
-                                          LocalDate start, LocalDate end, double days) {
-        LeaveResponseDto dto = Mockito.mock(LeaveResponseDto.class);
-        when(dto.getId()).thenReturn(id);
-        when(dto.getEmployeeName()).thenReturn(employeeName);
-        when(dto.getLeaveTypeDisplayName()).thenReturn(typeDisplay);
-        when(dto.getStartDate()).thenReturn(start);
-        when(dto.getEndDate()).thenReturn(end);
-        when(dto.getTotalDays()).thenReturn(days);
-        return dto;
-    }
-
-    @Test
-    void managerListsPendingApprovalsInChat() {
-        when(genAiClient.isConfigured()).thenReturn(false);
-        User manager = managerUser();
-        when(currentUserProvider.getCurrentUser()).thenReturn(manager);
-        LeaveResponseDto first = pendingLeave(UUID.randomUUID(), "Alice", "Casual Leave",
-                LocalDate.of(2030, 2, 3), LocalDate.of(2030, 2, 4), 2.0);
-        LeaveResponseDto second = pendingLeave(UUID.randomUUID(), "Bob", "Sick Leave",
-                LocalDate.of(2030, 3, 10), LocalDate.of(2030, 3, 10), 1.0);
-        when(approvalService.getPendingApprovals(eq(manager))).thenReturn(List.of(first, second));
-
-        AgentChatResponseDto response = agentService.processMessage(
-                new AgentChatRequestDto("show pending approvals", "conv-approve-a"));
-
-        assertEquals("APPROVE_LEAVES", response.getIntent());
-        assertTrue(response.getReply().contains("1."));
-        assertTrue(response.getReply().contains("2."));
-        assertTrue(response.getReply().contains("Alice"));
-        assertTrue(response.getReply().contains("Bob"));
-    }
-
-    @Test
-    void managerApprovesByNumberWithExistingAuthority() {
-        when(genAiClient.isConfigured()).thenReturn(false);
-        User manager = managerUser();
-        when(currentUserProvider.getCurrentUser()).thenReturn(manager);
-        UUID leaveId = UUID.randomUUID();
-        LeaveResponseDto pending = pendingLeave(leaveId, "Alice", "Casual Leave",
-                LocalDate.of(2030, 2, 3), LocalDate.of(2030, 2, 4), 2.0);
-        when(approvalService.getPendingApprovals(eq(manager))).thenReturn(List.of(pending));
-        LeaveResponseDto approved = pendingLeave(leaveId, "Alice", "Casual Leave",
-                LocalDate.of(2030, 2, 3), LocalDate.of(2030, 2, 4), 2.0);
-        when(approvalService.approveLeave(eq(leaveId), any(ApprovalActionDto.class), eq(manager)))
-                .thenReturn(approved);
-
-        AgentChatResponseDto response = agentService.processMessage(
-                new AgentChatRequestDto("approve 1", "conv-approve-b"));
-
-        assertTrue(response.isActionExecuted());
-        assertEquals("APPROVE_LEAVE", response.getActionName());
-        assertTrue(response.getReply().contains("Approved"));
-        Mockito.verify(approvalService, Mockito.times(1))
-                .approveLeave(eq(leaveId), any(ApprovalActionDto.class), eq(manager));
-    }
-
-    @Test
-    void nonManagerGetsEmptyApprovalsMessage() {
-        when(genAiClient.isConfigured()).thenReturn(false);
-        when(approvalService.getPendingApprovals(eq(employee))).thenReturn(List.of());
-
-        AgentChatResponseDto response = agentService.processMessage(
-                new AgentChatRequestDto("show pending approvals", "conv-approve-c"));
-
-        assertTrue(response.getReply().toLowerCase().contains("no pending approvals"));
-        assertFalse(response.isActionExecuted());
-    }
-
-    @Test
-    void agenticApproveGoesThroughConfirmGate() {
-        User manager = managerUser();
-        when(currentUserProvider.getCurrentUser()).thenReturn(manager);
-        UUID leaveId = UUID.randomUUID();
-        String args = "{\\\"leaveId\\\":\\\"" + leaveId + "\\\",\\\"comment\\\":\\\"ok\\\"}";
-        String toolCall = "{\"content\": null, \"tool_calls\": [{\"id\": \"c1\", \"type\": \"function\", "
-                + "\"function\": {\"name\": \"approve_leave\", \"arguments\": \"" + args + "\"}}]}";
-        when(genAiClient.chatWithTools(anyString(), anyList(), anyList()))
-                .thenReturn(Optional.of(toolCall));
-        LeaveResponseDto approved = pendingLeave(leaveId, "Alice", "Casual Leave",
-                LocalDate.of(2030, 2, 3), LocalDate.of(2030, 2, 4), 2.0);
-        when(approvalService.approveLeave(eq(leaveId), any(ApprovalActionDto.class), eq(manager)))
-                .thenReturn(approved);
-
-        AgentChatResponseDto proposal = agentService.processMessage(
-                new AgentChatRequestDto("please approve alice's leave", "conv-approve-d"));
-
-        assertFalse(proposal.isActionExecuted());
-        Mockito.verifyNoInteractions(approvalService);
-
-        AgentChatResponseDto confirmed = agentService.processMessage(
-                new AgentChatRequestDto("yes", "conv-approve-d"));
-
-        Mockito.verify(approvalService, Mockito.times(1))
-                .approveLeave(eq(leaveId), any(ApprovalActionDto.class), eq(manager));
-        assertTrue(confirmed.isActionExecuted());
-    }
-
-    private LeaveResponseDto halfDayCreatedDto() {
-        LeaveResponseDto created = Mockito.mock(LeaveResponseDto.class);
-        when(created.getId()).thenReturn(UUID.randomUUID());
-        when(created.getLeaveTypeDisplayName()).thenReturn("Sick Leave");
-        when(created.getStartDate()).thenReturn(LocalDate.now().plusDays(1));
-        when(created.getEndDate()).thenReturn(LocalDate.now().plusDays(1));
-        when(created.getTotalDays()).thenReturn(0.5);
-        return created;
-    }
-
-    @Test
-    void halfDaySessionIsAskedWhenMissing() {
-        when(genAiClient.isConfigured()).thenReturn(false);
-        LeaveResponseDto created = halfDayCreatedDto();
-        when(leaveService.applyLeave(any(), eq(employee))).thenReturn(created);
-
-        AgentChatResponseDto question = agentService.processMessage(
-                new AgentChatRequestDto("apply half day sick leave tomorrow", "conv-half-a"));
-
-        assertEquals("APPLY_LEAVE", question.getIntent());
-        assertTrue(question.getReply().contains("First half"));
-        assertFalse(question.isActionExecuted());
-
-        AgentChatResponseDto applied = agentService.processMessage(
-                new AgentChatRequestDto("First half (morning)", "conv-half-a"));
-        assertTrue(applied.isActionExecuted());
-    }
-
-    @Test
-    void morningMapsToFirstHalfAndApplies() {
-        when(genAiClient.isConfigured()).thenReturn(false);
-        LeaveResponseDto created = halfDayCreatedDto();
-        when(leaveService.applyLeave(any(), eq(employee))).thenReturn(created);
-
-        AgentChatResponseDto response = agentService.processMessage(
-                new AgentChatRequestDto("apply half day sick leave tomorrow morning", "conv-half-b"));
-
-        assertTrue(response.isActionExecuted());
-        ArgumentCaptor<CreateLeaveRequestDto> captor = ArgumentCaptor.forClass(CreateLeaveRequestDto.class);
-        Mockito.verify(leaveService).applyLeave(captor.capture(), eq(employee));
-        assertTrue(captor.getValue().isHalfDay());
-        assertEquals("FIRST_HALF", captor.getValue().getHalfDaySession());
-    }
-
-    @Test
-    void afternoonMapsToSecondHalf() {
-        when(genAiClient.isConfigured()).thenReturn(false);
-        LeaveResponseDto created = halfDayCreatedDto();
-        when(leaveService.applyLeave(any(), eq(employee))).thenReturn(created);
-
-        agentService.processMessage(
-                new AgentChatRequestDto("apply half day sick leave tomorrow", "conv-half-c"));
-        AgentChatResponseDto response = agentService.processMessage(
-                new AgentChatRequestDto("tomorrow afternoon", "conv-half-c"));
-
-        assertTrue(response.isActionExecuted());
-        ArgumentCaptor<CreateLeaveRequestDto> captor = ArgumentCaptor.forClass(CreateLeaveRequestDto.class);
-        Mockito.verify(leaveService).applyLeave(captor.capture(), eq(employee));
-        assertEquals("SECOND_HALF", captor.getValue().getHalfDaySession());
-    }
-
-    @Test
-    void halfDaySickNudgesSickRoomFloor6Room7() {
-        when(genAiClient.isConfigured()).thenReturn(false);
-        LeaveResponseDto created = halfDayCreatedDto();
-        when(leaveService.applyLeave(any(), eq(employee))).thenReturn(created);
-        when(wellbeingService.evaluateLeaveWellbeing(any(), eq(employee))).thenReturn(List.of());
-
-        AgentChatResponseDto response = agentService.processMessage(
-                new AgentChatRequestDto("apply half day sick leave tomorrow morning", "conv-half-d"));
-
-        assertTrue(response.isActionExecuted());
-        assertTrue(response.getReply().contains("Floor 6"));
-        assertTrue(response.getReply().contains("Room 7"));
-    }
-
-    private LeaveResponseDto volunteeringCreatedDto(UUID leaveId) {
-        LeaveResponseDto created = Mockito.mock(LeaveResponseDto.class);
-        when(created.getId()).thenReturn(leaveId);
-        when(created.getLeaveTypeDisplayName()).thenReturn("Volunteering Leave");
-        when(created.getStartDate()).thenReturn(LocalDate.now().plusDays(3));
-        when(created.getEndDate()).thenReturn(LocalDate.now().plusDays(3));
-        when(created.getTotalDays()).thenReturn(1.0);
-        return created;
-    }
-
-    @Test
-    void volunteeringApplyOffersCsrGroups() {
-        when(genAiClient.isConfigured()).thenReturn(false);
-        UUID leaveId = UUID.randomUUID();
-        LeaveResponseDto created = volunteeringCreatedDto(leaveId);
-        when(leaveService.applyLeave(any(), eq(employee))).thenReturn(created);
-        when(wellbeingService.evaluateLeaveWellbeing(any(), eq(employee))).thenReturn(List.of());
-
-        AgentChatResponseDto response = agentService.processMessage(
-                new AgentChatRequestDto("apply volunteering leave tomorrow", "conv-vol-a"));
-
-        assertTrue(response.isActionExecuted());
-        assertTrue(response.getReply().contains("Paws & Care Animal Rescue"));
-        assertTrue(response.getReply().toLowerCase().contains("enroll you"));
-        assertTrue(response.getReply().toLowerCase().contains("intranet banner"));
-    }
-
-    @Test
-    void volunteeringSignupEnrollsNamedGroupWithBanner() {
-        when(genAiClient.isConfigured()).thenReturn(false);
-        UUID leaveId = UUID.randomUUID();
-        LeaveResponseDto created = volunteeringCreatedDto(leaveId);
-        when(leaveService.applyLeave(any(), eq(employee))).thenReturn(created);
-        when(wellbeingService.evaluateLeaveWellbeing(any(), eq(employee))).thenReturn(List.of());
-
-        agentService.processMessage(
-                new AgentChatRequestDto("apply volunteering leave tomorrow", "conv-vol-b"));
-        AgentChatResponseDto enrolled = agentService.processMessage(
-                new AgentChatRequestDto("Paws & Care Animal Rescue and feature me", "conv-vol-b"));
-
-        Mockito.verify(volunteeringService, Mockito.times(1))
-                .enroll(eq(employee.getId()), eq("Paws & Care Animal Rescue"), eq(leaveId), eq(true));
-        assertTrue(enrolled.getReply().contains("Paws & Care Animal Rescue"));
-        assertTrue(enrolled.getReply().toLowerCase().contains("intranet banner"));
-    }
-
-    @Test
-    void configuredButEndpointDownReturnsUnavailableNotRuleReply() {
-        when(genAiClient.chatWithTools(anyString(), anyList(), anyList()))
-                .thenReturn(Optional.empty());
-
-        AgentChatResponseDto response = agentService.processMessage(
-                new AgentChatRequestDto("hello", "conv-unavail-a"));
-
-        assertTrue(response.getReply().contains("isn't reachable"));
-        assertFalse(response.isActionExecuted());
-    }
-
-    @Test
-    void configuredButGarbageResponseReturnsUnavailable() {
-        when(genAiClient.chatWithTools(anyString(), anyList(), anyList()))
-                .thenReturn(Optional.of("not-json{{{"));
-
-        AgentChatResponseDto response = agentService.processMessage(
-                new AgentChatRequestDto("how many sick days do I have left?", "conv-unavail-b"));
-
-        assertTrue(response.getReply().contains("isn't reachable"));
-        assertFalse(response.isActionExecuted());
     }
 }

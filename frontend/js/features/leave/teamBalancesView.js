@@ -1,5 +1,6 @@
 import { leaveApi } from '../../api/leaveApi.js';
 import { Auth } from '../../core/auth.js';
+import { FormatUtils } from '../../utils/formatUtils.js';
 
 export const TeamBalancesView = {
   async render() {
@@ -40,6 +41,7 @@ export const TeamBalancesView = {
     const scope = isAdmin ? 'all' : 'reportees';
 
     try {
+      const fmt = (v) => (typeof FormatUtils !== 'undefined' ? FormatUtils.formatDays(v) : (v == null || isNaN(v) ? '0.0' : Number(v).toFixed(1)));
       const balances = await leaveApi.getBalances(scope);
       if (!balances.length) {
         tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; color:var(--text-muted); padding:2rem;">No balance records found for team.</td></tr>';
@@ -50,10 +52,10 @@ export const TeamBalancesView = {
         <tr>
           <td style="font-weight: 600;">${b.employeeName || 'Employee'}</td>
           <td>${b.leaveTypeDisplayName}</td>
-          <td>${b.allocatedDays}</td>
-          <td><strong style="color:var(--danger);">${b.usedDays}</strong></td>
-          <td><span style="color:#d97706;">${b.pendingDays}</span></td>
-          <td><strong style="color:var(--primary); font-size:1rem;">${b.remainingDays}</strong></td>
+          <td>${fmt(b.allocatedDays)}</td>
+          <td><strong style="color:var(--danger);">${fmt(b.usedDays)}</strong></td>
+          <td><span style="color:#d97706;">${fmt(b.pendingDays)}</span></td>
+          <td><strong style="color:var(--primary); font-size:1rem;">${fmt(b.remainingDays)}</strong></td>
         </tr>
       `).join('');
     } catch (err) {

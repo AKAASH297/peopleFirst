@@ -47,6 +47,16 @@ public class UserService {
     }
 
     @Transactional(readOnly = true)
+    public List<User> getDirectReportEntities(UUID managerId) {
+        return userRepository.findByManagerId(managerId);
+    }
+
+    @Transactional(readOnly = true)
+    public List<User> getAllUserEntities() {
+        return userRepository.findAll();
+    }
+
+    @Transactional(readOnly = true)
     public List<UserResponseDto> getAllUsers() {
         return userRepository.findAll().stream()
                 .map(userMapper::toDto)

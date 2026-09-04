@@ -33,6 +33,7 @@ export const ChatWidget = {
         </div>
         <div id="kuraQuickReplies" class="chat-quick-replies">
           <button class="quick-reply-chip" data-msg="What are my leave balances?">My Balances</button>
+          <button class="quick-reply-chip" data-msg="Check my weekly wellbeing status">📊 Weekly Wellbeing</button>
           <button class="quick-reply-chip" data-msg="Company leave policies">Policies</button>
           <button class="quick-reply-chip" data-msg="Campus amenities">Amenities</button>
         </div>
@@ -116,10 +117,54 @@ export const ChatWidget = {
       if (response.wellbeingSuggestions && response.wellbeingSuggestions.length) {
         response.wellbeingSuggestions.forEach(sug => {
           const sugCard = document.createElement('div');
-          sugCard.style.cssText = 'background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; padding:8px 12px; margin-top:6px; font-size:0.8125rem;';
+          sugCard.style.cssText = 'background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; padding:10px 14px; margin-top:8px; font-size:0.875rem;';
+          
+          let extraHtml = '';
+          if (sug.partnerHospitals && sug.partnerHospitals.length) {
+            extraHtml += `
+              <div style="margin-top:8px; display:flex; flex-direction:column; gap:4px;">
+                <div style="font-weight:600; font-size:0.8125rem; color:#166534;">🏥 Partner Hospitals with OPD Discounts:</div>
+                ${sug.partnerHospitals.map(h => `
+                  <div style="background:#fff; border:1px solid #dcfce7; padding:6px 8px; border-radius:4px; font-size:0.75rem;">
+                    <strong>${h.name}</strong> (${h.city})<br/>
+                    🩺 ${h.opdDiscount} • 🔬 ${h.labTestDiscount} • 📞 ${h.contactNumber}
+                  </div>
+                `).join('')}
+              </div>
+            `;
+          }
+
+          if (sug.groupSuggestions && sug.groupSuggestions.length) {
+            extraHtml += `
+              <div style="margin-top:8px; display:flex; flex-direction:column; gap:4px;">
+                <div style="font-weight:600; font-size:0.8125rem; color:#166534;">🤝 Active Corporate Volunteering Groups:</div>
+                ${sug.groupSuggestions.map(g => `
+                  <div style="background:#fff; border:1px solid #dcfce7; padding:4px 8px; border-radius:4px; font-size:0.75rem; color:#166534; font-weight:500;">
+                    ${g}
+                  </div>
+                `).join('')}
+              </div>
+            `;
+          }
+
+          if (sug.partnerResorts && sug.partnerResorts.length) {
+            extraHtml += `
+              <div style="margin-top:8px; display:flex; flex-direction:column; gap:4px;">
+                <div style="font-weight:600; font-size:0.8125rem; color:#166534;">🌴 Partner Resorts & Discounts:</div>
+                ${sug.partnerResorts.map(r => `
+                  <div style="background:#fff; border:1px solid #dcfce7; padding:6px 8px; border-radius:4px; font-size:0.75rem;">
+                    <strong>${r.name}</strong> (${r.destination}) — <span style="color:#059669; font-weight:600;">${r.discount}</span> (Code: <code>${r.couponCode}</code>)
+                  </div>
+                `).join('')}
+              </div>
+            `;
+          }
+
           sugCard.innerHTML = `
             <div style="font-weight:600; color:#166534;">🌿 ${sug.title}</div>
-            <div style="color:#1e293b; margin-top:3px;">${sug.message}</div>
+            <div style="color:#1e293b; margin-top:4px; line-height: 1.4;">${sug.message}</div>
+            ${extraHtml}
+            ${sug.actionUrl ? `<div style="margin-top:8px;"><a href="${sug.actionUrl}" target="_blank" rel="noopener noreferrer" style="color:#0284c7; text-decoration:underline; font-weight:500; font-size:0.8125rem;">📄 Open Action Portal &rarr;</a></div>` : ''}
           `;
           agentBubble.appendChild(sugCard);
         });
@@ -180,7 +225,12 @@ export const ChatWidget = {
   },
 
   formatInline(line) {
-    return this.escapeHtml(line).replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+    let s = this.escapeHtml(line);
+    return s
+      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*(.*?)\*/g, '<em>$1</em>')
+      .replace(/`([^`]+)`/g, '<code style="background:rgba(0,0,0,0.06); padding:2px 5px; border-radius:4px; font-size:0.85em;">$1</code>')
+      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" style="color:#0284c7; text-decoration:underline;">$1</a>');
   },
 
   isTableStart(lines, i) {

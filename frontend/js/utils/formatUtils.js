@@ -28,5 +28,14 @@ export const FormatUtils = {
       default:
         return '<span class="badge badge-approved" style="background:#f1f5f9; color:#475569;">Employee</span>';
     }
+  },
+
+  formatDays(val) {
+    if (val === null || val === undefined || isNaN(val)) return '0.0';
+    return Number(val).toFixed(1);
   }
 };
+
+if (typeof window !== 'undefined') {
+  window.FormatUtils = FormatUtils;
+}
