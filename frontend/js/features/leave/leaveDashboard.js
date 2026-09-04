@@ -26,8 +26,6 @@ export const LeaveDashboard = {
 
       <div id="dashboardWellbeingContainer" style="margin-bottom: 1.5rem;"></div>
 
-      <div id="vacationNudgeContainer"></div>
-
       <div style="margin-bottom: 2rem;">
         <h3 style="font-size: 1.125rem; font-weight: 600; margin-bottom: 1rem;">My Leave Balances (${new Date().getFullYear()})</h3>
         <div id="balancesGrid" class="balance-grid">
@@ -139,36 +137,6 @@ export const LeaveDashboard = {
       }
     } catch (err) {
       console.error(err);
-    }
-
-    // 3. Check Trigger 4: Vacation Nudge (§6)
-    try {
-      const nudge = await agentApi.getVacationNudge();
-      if (nudge && nudge.trigger === 'NO_LEAVE_LAST_QUARTER') {
-        const container = document.getElementById('vacationNudgeContainer');
-        if (container) {
-          container.innerHTML = `
-            <div class="alert alert-info" style="border-left: 4px solid var(--primary); margin-bottom: 1.5rem;">
-              <span style="font-size: 1.5rem;">🌴</span>
-              <div style="flex: 1;">
-                <div style="font-weight: 600; font-size: 0.9375rem;">${nudge.title}</div>
-                <div style="margin-top: 2px;">${nudge.message}</div>
-                <div style="margin-top: 0.5rem; display: flex; gap: 0.5rem;">
-                  <button id="exploreResortsBtn" class="btn btn-primary btn-sm">Explore Partner Resorts & Discounts</button>
-                  <button id="dismissNudgeBtn" class="btn btn-secondary btn-sm">Dismiss</button>
-                </div>
-              </div>
-            </div>
-          `;
-
-          document.getElementById('exploreResortsBtn')?.addEventListener('click', () => Router.navigate('wellness'));
-          document.getElementById('dismissNudgeBtn')?.addEventListener('click', () => {
-            container.innerHTML = '';
-          });
-        }
-      }
-    } catch (err) {
-      console.warn('Vacation nudge check failed:', err);
     }
   }
 };

@@ -149,25 +149,7 @@ export const WellnessView = {
               </div>
             </div>
           ` : ''}
-          ${status.vacationNudge ? `
-            <div class="alert alert-warning" style="margin-top: 1rem; padding: 0.75rem 1rem; font-size: 0.8125rem; background: #fefce8; border-color: #fef08a;">
-              <span>🌴</span>
-              <div style="flex:1;">
-                <strong>Vacation Nudge:</strong> You have not taken time off in the last 90 days. Check out partner resorts below or request a reminder email.
-              </div>
-              <button id="nudgeEmailBtn" class="btn btn-primary btn-sm">Send Me Perks Email</button>
-            </div>
-          ` : ''}
         `;
-
-        document.getElementById('nudgeEmailBtn')?.addEventListener('click', async () => {
-          try {
-            await agentApi.sendVacationEmail();
-            alert(`📧 Vacation perks email successfully dispatched to ${user.email}!`);
-          } catch (e) {
-            console.error(e);
-          }
-        });
       }
     } catch (e) {
       console.error(e);
