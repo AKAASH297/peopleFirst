@@ -35,3 +35,7 @@ export const FormatUtils = {
     return Number(val).toFixed(1);
   }
 };
+
+if (typeof window !== 'undefined') {
+  window.FormatUtils = FormatUtils;
+}

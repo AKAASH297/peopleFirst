@@ -4,6 +4,11 @@ import { Router } from './router.js';
 import { Navbar } from '../components/navbar.js';
 import { Sidebar } from '../components/sidebar.js';
 import { ChatWidget } from '../components/chatWidget.js';
+import { FormatUtils } from '../utils/formatUtils.js';
+
+if (typeof window !== 'undefined') {
+  window.FormatUtils = FormatUtils;
+}
 
 import { LoginView } from '../features/auth/loginView.js';
 import { LoginFeature } from '../features/auth/login.js';
