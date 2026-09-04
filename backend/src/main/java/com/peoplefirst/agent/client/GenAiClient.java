@@ -68,9 +68,7 @@ public class GenAiClient {
     }
 
     public String getBaseUrl() {
-        return (openAiBaseUrl != null && !openAiBaseUrl.trim().isEmpty())
-                ? openAiBaseUrl.trim()
-                : "https://api.openai.com/v1";
+        return openAiBaseUrl();
     }
 
     public String getProvider() {
@@ -358,6 +356,10 @@ public class GenAiClient {
         String base = (openAiBaseUrl != null && !openAiBaseUrl.trim().isEmpty())
                 ? openAiBaseUrl.trim()
                 : "https://api.openai.com/v1";
+        base = base.replaceAll("/+$", "");
+        if (base.endsWith("/chat/completions")) {
+            base = base.substring(0, base.length() - "/chat/completions".length());
+        }
         return base;
     }
 

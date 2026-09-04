@@ -65,4 +65,12 @@ class GenAiClientTest {
         assertTrue(reply2.isPresent());
         assertEquals("/chat/completions", lastPath);
     }
+
+    @Test
+    void baseUrlAlreadyContainingChatCompletionsIsNotDoubled() {
+        client.setBaseUrl("http://localhost:" + stub.getAddress().getPort() + "/some/path/chat/completions");
+        Optional<String> reply = client.generateContent("sys", "hi");
+        assertTrue(reply.isPresent());
+        assertEquals("/some/path/chat/completions", lastPath);
+    }
 }
