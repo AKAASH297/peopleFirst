@@ -7,7 +7,9 @@ public enum AgentTool {
     VIEW_LEAVES("view_leaves"),
     CHECK_POLICY("get_policy"),
     WELLBEING("wellbeing"),
-    TICKET_INQUIRY("ticket_info");
+    TICKET_INQUIRY("ticket_info"),
+    APPROVE_LEAVE("approve_leave"),
+    REJECT_LEAVE("reject_leave");
 
     private final String name;
 

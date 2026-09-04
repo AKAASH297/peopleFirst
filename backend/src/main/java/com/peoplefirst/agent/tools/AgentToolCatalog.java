@@ -47,7 +47,23 @@ public class AgentToolCatalog {
                 schema(AgentTool.TICKET_INQUIRY,
                         "Get information about the user's support tickets. Never invent ticket details.",
                         Map.of(),
-                        List.of()));
+                        List.of()),
+                schema(AgentTool.APPROVE_LEAVE,
+                        "Approve a team member's pending leave request. Requires the pending leave ID. Never invent leave IDs; ask for pending approvals first.",
+                        Map.of(
+                                "leaveId", Map.of("type", "string",
+                                        "description", "Pending leave request ID as a UUID string."),
+                                "comment", Map.of("type", "string",
+                                        "description", "Optional approval comment.")),
+                        List.of("leaveId")),
+                schema(AgentTool.REJECT_LEAVE,
+                        "Reject a team member's pending leave request. Requires the pending leave ID. Never invent leave IDs; ask for pending approvals first.",
+                        Map.of(
+                                "leaveId", Map.of("type", "string",
+                                        "description", "Pending leave request ID as a UUID string."),
+                                "comment", Map.of("type", "string",
+                                        "description", "Optional rejection comment.")),
+                        List.of("leaveId")));
     }
 
     private Map<String, Object> schema(AgentTool tool, String description,

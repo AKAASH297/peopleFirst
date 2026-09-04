@@ -25,8 +25,12 @@ import com.peoplefirst.wellbeing.service.WellbeingService;
 import com.peoplefirst.agent.client.GenAiClient;
 import com.peoplefirst.agent.tools.AgentTool;
 import com.peoplefirst.agent.tools.AgentToolCatalog;
+import com.peoplefirst.approval.dto.ApprovalActionDto;
+import com.peoplefirst.approval.service.ApprovalService;
+import com.peoplefirst.user.entity.Role;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
@@ -58,6 +62,7 @@ public class AgentService {
     private final WellbeingService wellbeingService;
     private final LeaveMapper leaveMapper;
     private final GenAiClient genAiClient;
+    private final ApprovalService approvalService;
 
     // Multi-turn conversational leave draft store keyed by User UUID
     private final Map<UUID, PendingLeaveDraft> userDrafts = new ConcurrentHashMap<>();
@@ -78,7 +83,8 @@ public class AgentService {
                         PolicyService policyService,
                         WellbeingService wellbeingService,
                         LeaveMapper leaveMapper,
-                        GenAiClient genAiClient) {
+                        GenAiClient genAiClient,
+                        ApprovalService approvalService) {
         this.intentParser = intentParser;
         this.currentUserProvider = currentUserProvider;
         this.leaveService = leaveService;
@@ -87,6 +93,7 @@ public class AgentService {
         this.wellbeingService = wellbeingService;
         this.leaveMapper = leaveMapper;
         this.genAiClient = genAiClient;
+        this.approvalService = approvalService;
     }
 
     public AgentChatResponseDto processMessage(AgentChatRequestDto request) {
@@ -154,6 +161,8 @@ public class AgentService {
                 return handleApplyLeave(message, user);
             case CANCEL_LEAVE:
                 return handleCancelLeave(message, user);
+            case APPROVE_LEAVES:
+                return handleApprovalInbox(message, user);
             case VIEW_LEAVES:
                 return handleViewLeaves(user);
             case CHECK_POLICY:
@@ -187,6 +196,10 @@ public class AgentService {
                 pendingActions.remove(user.getId());
                 if (AgentTool.APPLY_LEAVE.getName().equals(pending.getToolName())) {
                     return executeLeaveApplication(buildDraftFromArguments(pending.getArgumentsJson(), message), user);
+                }
+                if (AgentTool.APPROVE_LEAVE.getName().equals(pending.getToolName())
+                        || AgentTool.REJECT_LEAVE.getName().equals(pending.getToolName())) {
+                    return executeApprovalAction(pending, user);
                 }
                 return handleCancelLeave(message, user);
             }
@@ -316,10 +329,12 @@ public class AgentService {
                         appendToHistory(history, Map.of("role", "tool",
                                 "tool_call_id", toolCallId, "content", toCompactJson(toolResponse.getActionData())));
                     }
-                    case APPLY_LEAVE, CANCEL_LEAVE -> {
+                    case APPLY_LEAVE, CANCEL_LEAVE, APPROVE_LEAVE, REJECT_LEAVE -> {
                         pendingActions.put(user.getId(), new PendingAgentAction(tool.getName(), argumentsJson));
                         String intent = tool == AgentTool.APPLY_LEAVE
-                                ? AgentIntent.APPLY_LEAVE.name() : AgentIntent.CANCEL_LEAVE.name();
+                                ? AgentIntent.APPLY_LEAVE.name()
+                                : tool == AgentTool.CANCEL_LEAVE
+                                ? AgentIntent.CANCEL_LEAVE.name() : AgentIntent.APPROVE_LEAVES.name();
                         AgentChatResponseDto confirm = new AgentChatResponseDto(
                                 "I've prepared " + summarizeArguments(tool, argumentsJson)
                                         + ". Reply **yes** to confirm or **no** to discard.",
@@ -372,6 +387,12 @@ public class AgentService {
     private String summarizeArguments(AgentTool tool, String argumentsJson) {
         if (tool == AgentTool.CANCEL_LEAVE) {
             return "cancellation of your upcoming leave";
+        }
+        if (tool == AgentTool.APPROVE_LEAVE) {
+            return "approval of the requested team leave";
+        }
+        if (tool == AgentTool.REJECT_LEAVE) {
+            return "rejection of the requested team leave";
         }
         try {
             JsonNode args = new ObjectMapper().readTree(argumentsJson != null ? argumentsJson : "{}");
@@ -471,6 +492,10 @@ public class AgentService {
         sb.append("- Late requests or retrospective corrections require raising a Support Ticket.\n");
         sb.append("- Campus Wellbeing perks: Zero-gravity massage chairs (Bldg 1, 4th Fl), Games lounge (Bldg 3, 3rd Fl), Psychologist counseling (Bldg 2, 2nd Fl), Guided Yoga (Bldg 1, Terrace).\n");
         sb.append("- Healthcare: Partner hospital OPD discounts available; OPD claims must be submitted within 90 days.\n");
+        if (user.getRole() == Role.MANAGER || user.getRole() == Role.ADMIN) {
+            sb.append("- As a ").append(user.getRole().name())
+                    .append(" you can review team leave: ask me for \"pending approvals\" and approve or reject by number.\n");
+        }
         sb.append("Formatting rule: NEVER use markdown tables (pipes) — this chat cannot render them. Present tabular data as bullet lists with bold labels (e.g. \"• **Sick Leave:** 16 days remaining\").\n");
         sb.append("Respond warmly, concisely, and empathetically. Keep markdown formatting clean.");
         return sb.toString();
@@ -795,6 +820,117 @@ public class AgentService {
 
     private List<String> getPostActionQuickReplies(User user) {
         return List.of("Check my balances", "View my leaves", "Company leave policies", "Explore amenities");
+    }
+
+    private AgentChatResponseDto handleApprovalInbox(String message, User user) {
+        List<LeaveResponseDto> pendings = approvalService.getPendingApprovals(user);
+        if (pendings.isEmpty()) {
+            AgentChatResponseDto response = new AgentChatResponseDto(
+                    "You have no pending approvals.", AgentIntent.APPROVE_LEAVES.name());
+            response.setActionExecuted(false);
+            response.setQuickReplies(getPostActionQuickReplies(user));
+            return response;
+        }
+
+        int ordinal = intentParser.parseApprovalOrdinal(message);
+        if (ordinal >= 1) {
+            if (ordinal > pendings.size()) {
+                return approvalListReply(pendings, user, "I couldn't find #" + ordinal + ".");
+            }
+            LeaveResponseDto target = pendings.get(ordinal - 1);
+            boolean approve = message.toLowerCase().trim().startsWith("approve");
+            try {
+                ApprovalActionDto action = new ApprovalActionDto();
+                action.setComment(approve ? "Approved via Kura" : "Rejected via Kura");
+                LeaveResponseDto result = approve
+                        ? approvalService.approveLeave(target.getId(), action, user)
+                        : approvalService.rejectLeave(target.getId(), action, user);
+                String verb = approve ? "Approved" : "Rejected";
+                String reply = "✅ " + verb + " " + result.getEmployeeName() + "'s "
+                        + result.getLeaveTypeDisplayName() + " (" + result.getStartDate()
+                        + " to " + result.getEndDate() + ").";
+                AgentChatResponseDto response = new AgentChatResponseDto(reply, AgentIntent.APPROVE_LEAVES.name());
+                response.setActionExecuted(true);
+                response.setActionName(approve ? "APPROVE_LEAVE" : "REJECT_LEAVE");
+                response.setActionData(result);
+                response.setQuickReplies(getPostActionQuickReplies(user));
+                return response;
+            } catch (AccessDeniedException e) {
+                AgentChatResponseDto denied = new AgentChatResponseDto(
+                        "You can only act on your direct reportees' requests.",
+                        AgentIntent.APPROVE_LEAVES.name());
+                denied.setActionExecuted(false);
+                denied.setQuickReplies(getPostActionQuickReplies(user));
+                return denied;
+            }
+        }
+
+        return approvalListReply(pendings, user, null);
+    }
+
+    private AgentChatResponseDto approvalListReply(List<LeaveResponseDto> pendings, User user, String note) {
+        StringBuilder sb = new StringBuilder("Here are the pending team leave requests:\n\n");
+        for (int i = 0; i < pendings.size(); i++) {
+            LeaveResponseDto l = pendings.get(i);
+            sb.append(i + 1).append(". ").append(l.getEmployeeName()).append(" — ")
+                    .append(l.getLeaveTypeDisplayName()).append(" ")
+                    .append(l.getStartDate()).append(" to ").append(l.getEndDate())
+                    .append(" (").append(formatDays(l.getTotalDays())).append("d)\n");
+        }
+        sb.append("\nReply `approve 1` or `reject 2`.");
+        if (note != null && !note.isBlank()) {
+            sb.append("\n").append(note);
+        }
+        AgentChatResponseDto response = new AgentChatResponseDto(sb.toString(), AgentIntent.APPROVE_LEAVES.name());
+        response.setActionExecuted(false);
+        response.setQuickReplies(getPostActionQuickReplies(user));
+        return response;
+    }
+
+    private String formatDays(double days) {
+        return (days == Math.floor(days) && !Double.isInfinite(days))
+                ? String.valueOf((long) days) : String.valueOf(days);
+    }
+
+    private AgentChatResponseDto executeApprovalAction(PendingAgentAction pending, User user) {
+        boolean approve = AgentTool.APPROVE_LEAVE.getName().equals(pending.getToolName());
+        UUID leaveId = null;
+        String comment = null;
+        try {
+            JsonNode args = new ObjectMapper()
+                    .readTree(pending.getArgumentsJson() != null ? pending.getArgumentsJson() : "{}");
+            String idText = args.path("leaveId").asText(null);
+            if (idText != null && !idText.isBlank()) {
+                leaveId = UUID.fromString(idText.trim());
+            }
+            comment = args.path("comment").asText(null);
+        } catch (Exception e) {
+            leaveId = null;
+        }
+        if (leaveId == null) {
+            AgentChatResponseDto invalid = new AgentChatResponseDto(
+                    "That leave ID didn't look valid — please try again.",
+                    AgentIntent.APPROVE_LEAVES.name());
+            invalid.setActionExecuted(false);
+            invalid.setQuickReplies(getPostActionQuickReplies(user));
+            return invalid;
+        }
+        ApprovalActionDto action = new ApprovalActionDto();
+        action.setComment((comment != null && !comment.isBlank())
+                ? comment : (approve ? "Approved via Kura" : "Rejected via Kura"));
+        LeaveResponseDto result = approve
+                ? approvalService.approveLeave(leaveId, action, user)
+                : approvalService.rejectLeave(leaveId, action, user);
+        String verb = approve ? "Approved" : "Rejected";
+        String reply = "✅ " + verb + " " + result.getEmployeeName() + "'s "
+                + result.getLeaveTypeDisplayName() + " (" + result.getStartDate()
+                + " to " + result.getEndDate() + ").";
+        AgentChatResponseDto response = new AgentChatResponseDto(reply, AgentIntent.APPROVE_LEAVES.name());
+        response.setActionExecuted(true);
+        response.setActionName(approve ? "APPROVE_LEAVE" : "REJECT_LEAVE");
+        response.setActionData(result);
+        response.setQuickReplies(getPostActionQuickReplies(user));
+        return response;
     }
 
     private AgentChatResponseDto handleCancelLeave(String message, User user) {

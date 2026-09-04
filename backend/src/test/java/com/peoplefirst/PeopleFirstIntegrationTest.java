@@ -122,10 +122,12 @@ class PeopleFirstIntegrationTest {
         String adminToken = getJwtToken("admin1", "password123", "WEB");
 
         // 1. Employee applies for Sick leave (<= 2 days)
+        // Window +12..+13 stays clear of every other employee1 scenario in this class
+        // (casual +5..+6, paid tomorrow): the shared H2 DB makes same-user overlaps fail.
         CreateLeaveRequestDto applyDto = new CreateLeaveRequestDto();
         applyDto.setLeaveType(LeaveType.SICK);
-        applyDto.setStartDate(LocalDate.now().plusDays(4));
-        applyDto.setEndDate(LocalDate.now().plusDays(5));
+        applyDto.setStartDate(LocalDate.now().plusDays(12));
+        applyDto.setEndDate(LocalDate.now().plusDays(13));
         applyDto.setReason("Headache");
 
         MvcResult applyResult = mockMvc.perform(post("/api/leaves")
@@ -200,7 +202,9 @@ class PeopleFirstIntegrationTest {
     @Test
     @DisplayName("Single-turn Agent Sick Leave > 2 days: auto-attaches digital document placeholder")
     void testSingleTurnAgentSickLeaveWithDocAutoAttached() throws Exception {
-        String token = getJwtToken("employee1", "password123", "WEB");
+        // employee2 has no other leaves in this class; employee1's windows (tomorrow,
+        // +5..+6, +12..+13) would overlap this +1..+3 range in the shared H2 DB.
+        String token = getJwtToken("employee2", "password123", "WEB");
 
         AgentChatRequestDto chat = new AgentChatRequestDto("Apply sick leave for 3 days starting tomorrow", "conv-sick-3");
         mockMvc.perform(post("/api/agent/chat")

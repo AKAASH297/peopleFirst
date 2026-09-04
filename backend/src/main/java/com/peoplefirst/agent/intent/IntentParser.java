@@ -27,7 +27,14 @@ public class IntentParser {
             return AgentIntent.STRESS_EXPRESSION;
         }
 
-        // 2. Leave Application
+        // 2. Manager approvals (must precede the generic apply branch)
+        if (lower.contains("approv") || lower.contains("reject") || lower.contains("send back") ||
+                lower.contains("pending approvals") || lower.matches(".*my team.*leave.*") ||
+                lower.matches(".*team.*request.*")) {
+            return AgentIntent.APPROVE_LEAVES;
+        }
+
+        // 3. Leave Application
         if (lower.startsWith("apply") || lower.contains("apply for") || lower.contains("request leave") ||
                 lower.contains("book leave") || lower.contains("take leave") || lower.contains("apply leave") ||
                 lower.contains("need leave") || lower.contains("want leave") || lower.contains("want to apply") ||
@@ -38,31 +45,31 @@ public class IntentParser {
             return AgentIntent.APPLY_LEAVE;
         }
 
-        // 3. Cancel Leave
+        // 4. Cancel Leave
         if (lower.contains("cancel leave") || lower.contains("cancel my leave") || lower.startsWith("cancel")) {
             return AgentIntent.CANCEL_LEAVE;
         }
 
-        // 4. Check Balance
+        // 5. Check Balance
         if (lower.contains("balance") || lower.contains("remaining") || lower.contains("how many days") ||
                 lower.contains("leave quota") || lower.contains("available leaves")) {
             return AgentIntent.CHECK_BALANCE;
         }
 
-        // 5. Check Policy
+        // 6. Check Policy
         if (lower.contains("policy") || lower.contains("policies") || lower.contains("rule") ||
                 lower.contains("can i combine") || lower.contains("eligib") || lower.contains("cutoff") ||
                 lower.contains("deadline") || lower.contains("combination")) {
             return AgentIntent.CHECK_POLICY;
         }
 
-        // 6. View Leaves / Status
+        // 7. View Leaves / Status
         if (lower.contains("my leaves") || lower.contains("leave status") || lower.contains("history") ||
                 lower.contains("my applications") || lower.contains("pending requests")) {
             return AgentIntent.VIEW_LEAVES;
         }
 
-        // 7. Wellbeing inquiry
+        // 8. Wellbeing inquiry
         if (lower.contains("amenit") || lower.contains("gym") || lower.contains("doctor") ||
                 lower.contains("psychologist") || lower.contains("massage") || lower.contains("yoga") ||
                 lower.contains("zumba") || lower.contains("hospital") || lower.contains("resort") ||
@@ -70,19 +77,35 @@ public class IntentParser {
             return AgentIntent.WELLBEING_INQUIRY;
         }
 
-        // 8. Ticket inquiry
+        // 9. Ticket inquiry
         if (lower.contains("ticket") || lower.contains("support") || lower.contains("technical error") ||
                 lower.contains("helpdesk")) {
             return AgentIntent.TICKET_INQUIRY;
         }
 
-        // 9. Greeting / Help
+        // 10. Greeting / Help
         if (lower.equals("hi") || lower.equals("hello") || lower.equals("hey") || lower.contains("help") ||
                 lower.contains("who are you") || lower.contains("what can you do") || lower.contains("start")) {
             return AgentIntent.GREETING;
         }
 
         return AgentIntent.UNKNOWN;
+    }
+
+    public int parseApprovalOrdinal(String message) {
+        if (message == null) {
+            return -1;
+        }
+        Matcher ordinalMatcher = Pattern.compile("^(approve|reject|send back)\\s+(\\d+)\\s*$")
+                .matcher(message.toLowerCase().trim());
+        if (ordinalMatcher.matches()) {
+            try {
+                return Integer.parseInt(ordinalMatcher.group(2));
+            } catch (NumberFormatException e) {
+                return -1;
+            }
+        }
+        return -1;
     }
 
     public LeaveType extractLeaveType(String message) {

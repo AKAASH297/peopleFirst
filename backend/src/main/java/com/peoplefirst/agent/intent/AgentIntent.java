@@ -9,6 +9,7 @@ public enum AgentIntent {
     WELLBEING_INQUIRY,
     STRESS_EXPRESSION,
     TICKET_INQUIRY,
+    APPROVE_LEAVES,
     GREETING,
     UNKNOWN
 }
