@@ -65,7 +65,11 @@ public class AgentToolCatalog {
                                         "description", "Pending leave request ID as a UUID string."),
                                 "comment", Map.of("type", "string",
                                         "description", "Optional rejection comment.")),
-                        List.of("leaveId")));
+                        List.of("leaveId")),
+                schema(AgentTool.LIST_PENDING_APPROVALS,
+                        "List leave requests awaiting YOUR approval as a manager/admin (employee name, type, dates, ID). Call this FIRST when asked about pending/team approvals, before approve/reject. Returns [] for non-managers.",
+                        Map.of(),
+                        List.of()));
     }
 
     private Map<String, Object> schema(AgentTool tool, String description,

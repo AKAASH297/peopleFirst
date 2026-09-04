@@ -463,4 +463,32 @@ class AgentServiceAgenticTest {
         assertTrue(enrolled.getReply().contains("Green Earth Afforestation Drive"));
         assertTrue(enrolled.getReply().toLowerCase().contains("intranet banner"));
     }
+
+    @Test
+    void agenticPendingApprovalsListsRealRequests() {
+        User manager = new User("mgr1", "mgr1@test.com", "encodedPass", "Test Manager",
+                Role.MANAGER, false, "Eng", "Bangalore", UUID.randomUUID());
+        manager.setId(UUID.randomUUID());
+        when(currentUserProvider.getCurrentUser()).thenReturn(manager);
+        LeaveResponseDto first = Mockito.mock(LeaveResponseDto.class);
+        when(first.getId()).thenReturn(UUID.randomUUID());
+        when(first.getEmployeeName()).thenReturn("Alice");
+        LeaveResponseDto second = Mockito.mock(LeaveResponseDto.class);
+        when(second.getId()).thenReturn(UUID.randomUUID());
+        when(second.getEmployeeName()).thenReturn("Bob");
+        when(approvalService.getPendingApprovals(eq(manager))).thenReturn(List.of(first, second));
+        String toolCall = "{\"content\": null, \"tool_calls\": [{\"id\": \"c1\", \"type\": \"function\", "
+                + "\"function\": {\"name\": \"list_pending_approvals\", \"arguments\": \"{}\"}`]}".replace('`', '}');
+        String finalReply = "{\"content\": \"You have 2 pending approvals.\", \"tool_calls\": []}";
+        when(genAiClient.chatWithTools(anyString(), anyList(), anyList()))
+                .thenReturn(Optional.of(toolCall), Optional.of(finalReply));
+
+        AgentChatResponseDto response = agentService.processMessage(
+                new AgentChatRequestDto("show pending approvals", "conv-pend-ag"));
+
+        assertEquals("VIEW_PENDING_APPROVALS", response.getActionName());
+        assertTrue(response.isActionExecuted());
+        assertNotNull(response.getActionData());
+        assertNotNull(response.getReply());
+    }
 }

@@ -9,7 +9,8 @@ public enum AgentTool {
     WELLBEING("wellbeing"),
     TICKET_INQUIRY("ticket_info"),
     APPROVE_LEAVE("approve_leave"),
-    REJECT_LEAVE("reject_leave");
+    REJECT_LEAVE("reject_leave"),
+    LIST_PENDING_APPROVALS("list_pending_approvals");
 
     private final String name;
 

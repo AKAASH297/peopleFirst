@@ -453,6 +453,12 @@ public class AgentService {
                         appendToHistory(history, Map.of("role", "tool",
                                 "tool_call_id", toolCallId, "content", toCompactJson(toolResponse.getActionData())));
                     }
+                    case LIST_PENDING_APPROVALS -> {
+                        AgentChatResponseDto toolResponse = handleListPendingApprovals(user);
+                        lastToolResponse = toolResponse;
+                        appendToHistory(history, Map.of("role", "tool",
+                                "tool_call_id", toolCallId, "content", toCompactJson(toCompactApprovalList(toolResponse.getActionData()))));
+                    }
                     case APPLY_LEAVE, CANCEL_LEAVE, APPROVE_LEAVE, REJECT_LEAVE -> {
                         pendingActions.put(user.getId(), new PendingAgentAction(tool.getName(), argumentsJson));
                         String intent = tool == AgentTool.APPLY_LEAVE
@@ -638,6 +644,7 @@ public class AgentService {
         if (user.getRole() == Role.MANAGER || user.getRole() == Role.ADMIN) {
             sb.append("- As a ").append(user.getRole().name())
                     .append(" you can review team leave: ask me for \"pending approvals\" and approve or reject by number.\n");
+            sb.append("To approve: FIRST call list_pending_approvals to get real request IDs, present them, then approve/reject ONLY a listed ID after the user confirms. NEVER invent IDs; NEVER claim the inbox is empty without calling it.\n");
         }
         sb.append("Formatting rule: NEVER use markdown tables (pipes) — this chat cannot render them. Present tabular data as bullet lists with bold labels (e.g. \"• **Sick Leave:** 16 days remaining\").\n");
         sb.append("Respond warmly, concisely, and empathetically. Keep markdown formatting clean.");
@@ -1589,6 +1596,41 @@ public class AgentService {
         response.setActionData(result);
         response.setQuickReplies(getPostActionQuickReplies(user));
         return response;
+    }
+
+    private AgentChatResponseDto handleListPendingApprovals(User user) {
+        List<LeaveResponseDto> pendings = approvalService.getPendingApprovals(user);
+        AgentChatResponseDto response = new AgentChatResponseDto(
+                pendings.isEmpty()
+                        ? "There are no leave requests awaiting your approval."
+                        : "Found " + pendings.size() + " leave request(s) awaiting your approval.",
+                AgentIntent.VIEW_PENDING_APPROVALS.name());
+        response.setActionExecuted(true);
+        response.setActionName("VIEW_PENDING_APPROVALS");
+        response.setActionData(pendings);
+        response.setQuickReplies(getPostActionQuickReplies(user));
+        return response;
+    }
+
+    private List<Map<String, Object>> toCompactApprovalList(Object actionData) {
+        List<Map<String, Object>> compact = new ArrayList<>();
+        if (actionData instanceof List) {
+            for (Object item : (List<?>) actionData) {
+                if (item instanceof LeaveResponseDto) {
+                    LeaveResponseDto dto = (LeaveResponseDto) item;
+                    Map<String, Object> entry = new HashMap<>();
+                    entry.put("id", dto.getId() != null ? dto.getId().toString() : null);
+                    entry.put("employeeName", dto.getEmployeeName());
+                    entry.put("leaveType", dto.getLeaveType() != null ? dto.getLeaveType().name() : null);
+                    entry.put("startDate", dto.getStartDate() != null ? dto.getStartDate().toString() : null);
+                    entry.put("endDate", dto.getEndDate() != null ? dto.getEndDate().toString() : null);
+                    entry.put("totalDays", dto.getTotalDays());
+                    entry.put("status", dto.getStatus() != null ? dto.getStatus().name() : null);
+                    compact.add(entry);
+                }
+            }
+        }
+        return compact;
     }
 
     private AgentChatResponseDto continueVolunteeringSignup(String message, PendingVolunteeringSignup signup, User user) {
