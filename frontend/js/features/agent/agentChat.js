@@ -85,7 +85,7 @@ export const AgentChat = {
               ✨
             </div>
             <div>
-              <div style="font-weight: 700; font-size: 1.0625rem; color: var(--text-main);">Kura AI Concierge — Contractor Portal</div>
+              <div style="font-weight: 700; font-size: 1.0625rem; color: var(--text-main);">Kura · Leave & Wellbeing Concierge</div>
               <div style="font-size: 0.75rem; color: var(--text-muted);">
                 Logged in as <strong>${user.fullName}</strong> (${user.contractor ? 'Contractor Partner' : user.role})
               </div>

@@ -21,8 +21,7 @@ export const ChatWidget = {
           <div class="flex items-center gap-2">
             <span style="font-size: 1.25rem;">✨</span>
             <div>
-              <div style="font-weight: 700; font-size: 0.9375rem;">Kura AI Concierge</div>
-              <div style="font-size: 0.6875rem; opacity: 0.9;">Google Gemini GenAI + Grounded Policies</div>
+              <div style="font-weight: 700; font-size: 0.9375rem;">Kura · Leave & Wellbeing Concierge</div>
             </div>
           </div>
           <button id="closeKuraChat" style="background:none; border:none; color:#fff; font-size:1.25rem; cursor:pointer;">&times;</button>
