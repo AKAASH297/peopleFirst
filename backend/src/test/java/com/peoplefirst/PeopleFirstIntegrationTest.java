@@ -331,4 +331,28 @@ class PeopleFirstIntegrationTest {
                 .andExpect(jsonPath("$.actionExecuted").value(true))
                 .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("Admin Direct-DB-Edit Completed!")));
     }
+
+    @Test
+    @DisplayName("Agent replies: 'You can't apply leave for backdate.' when asked to apply for backdate")
+    void testBackdateLeaveAgentReply() throws Exception {
+        String empToken = getJwtToken("employee1", "password123", "AGENT");
+
+        // 1. User asks: "apply for back date"
+        AgentChatRequestDto req1 = new AgentChatRequestDto("apply for back date", "backdate-test-1");
+        mockMvc.perform(post("/api/agent/chat")
+                        .header("Authorization", "Bearer " + empToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req1)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reply").value("You can't apply leave for backdate."));
+
+        // 2. User asks with yesterday
+        AgentChatRequestDto req2 = new AgentChatRequestDto("apply sick leave for yesterday", "backdate-test-2");
+        mockMvc.perform(post("/api/agent/chat")
+                        .header("Authorization", "Bearer " + empToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req2)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.reply").value("You can't apply leave for backdate."));
+    }
 }

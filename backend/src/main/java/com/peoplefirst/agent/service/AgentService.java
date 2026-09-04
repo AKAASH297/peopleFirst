@@ -303,6 +303,19 @@ public class AgentService {
         boolean isHalfDay = intentParser.extractHalfDay(message);
         boolean docAttached = intentParser.extractDocumentAttached(message);
 
+        // Check if user specified a backdate or past date in draft
+        if (lower.contains("back date") || lower.contains("backdate") || lower.contains("past date") ||
+                lower.contains("past dates") || lower.contains("retroactiv") ||
+                (dates[0] != null && dates[0].isBefore(LocalDate.now()))) {
+            userDrafts.remove(user.getId());
+            AgentChatResponseDto response = new AgentChatResponseDto(
+                    "You can't apply leave for backdate.",
+                    AgentIntent.APPLY_LEAVE.name()
+            );
+            response.setQuickReplies(List.of("Tomorrow", "Next Week", "Check my balances", "Raise a support ticket"));
+            return response;
+        }
+
         if (extractedType != null) {
             draft.setLeaveType(extractedType);
         }
@@ -336,6 +349,7 @@ public class AgentService {
     }
 
     private AgentChatResponseDto handleApplyLeave(String message, User user) {
+        String lower = message.toLowerCase().trim();
         LeaveType leaveType = intentParser.extractLeaveType(message);
         LeaveType combinedWithType = intentParser.extractCombinedType(message);
         LocalDate[] dates = intentParser.extractDates(message);
@@ -343,6 +357,19 @@ public class AgentService {
         LocalDate endDate = dates[1];
         boolean isHalfDay = intentParser.extractHalfDay(message);
         boolean docAttached = intentParser.extractDocumentAttached(message);
+
+        // Check if user requested a backdate or past date
+        if (lower.contains("back date") || lower.contains("backdate") || lower.contains("past date") ||
+                lower.contains("past dates") || lower.contains("retroactiv") ||
+                (startDate != null && startDate.isBefore(LocalDate.now()))) {
+            userDrafts.remove(user.getId());
+            AgentChatResponseDto response = new AgentChatResponseDto(
+                    "You can't apply leave for backdate.",
+                    AgentIntent.APPLY_LEAVE.name()
+            );
+            response.setQuickReplies(List.of("Tomorrow", "Next Week", "Check my balances", "Raise a support ticket"));
+            return response;
+        }
 
         PendingLeaveDraft draft = new PendingLeaveDraft();
         draft.setLeaveType(leaveType);
@@ -503,6 +530,16 @@ public class AgentService {
 
         } catch (PolicyViolationException pve) {
             String msg = pve.getMessage();
+            if (msg != null && (msg.contains("backdate") || msg.contains("back date") ||
+                    msg.contains("retroactiv") || msg.contains("after the leave date has passed"))) {
+                AgentChatResponseDto response = new AgentChatResponseDto(
+                        "You can't apply leave for backdate.",
+                        AgentIntent.APPLY_LEAVE.name()
+                );
+                response.setQuickReplies(List.of("Tomorrow", "Next Week", "Check my balances", "Raise a support ticket"));
+                return response;
+            }
+
             StringBuilder sb = new StringBuilder("❌ **Policy Check Notice:** ").append(msg);
             AgentChatResponseDto response = new AgentChatResponseDto();
             response.setIntent(AgentIntent.APPLY_LEAVE.name());
@@ -615,6 +652,16 @@ public class AgentService {
         LocalDate startDate = dates[0];
         LocalDate endDate = dates[1] != null ? dates[1] : startDate;
 
+        String lower = message.toLowerCase().trim();
+        if (startDate.isBefore(LocalDate.now()) || lower.contains("back date") || lower.contains("backdate") || lower.contains("past date")) {
+            AgentChatResponseDto response = new AgentChatResponseDto(
+                    "You can't apply leave for backdate.",
+                    AgentIntent.EDIT_LEAVE.name()
+            );
+            response.setQuickReplies(List.of("Tomorrow", "Next Week", "Check my balances", "Raise a support ticket"));
+            return response;
+        }
+
         UpdateLeaveRequestDto updateDto = new UpdateLeaveRequestDto();
         updateDto.setLeaveType(newType);
         updateDto.setStartDate(startDate);
@@ -637,6 +684,10 @@ public class AgentService {
             response.setQuickReplies(getPostActionQuickReplies(user));
             return response;
         } catch (Exception e) {
+            if (e.getMessage() != null && (e.getMessage().contains("backdate") || e.getMessage().contains("back date") ||
+                    e.getMessage().contains("retroactiv") || e.getMessage().contains("after the leave date has passed"))) {
+                return new AgentChatResponseDto("You can't apply leave for backdate.", AgentIntent.EDIT_LEAVE.name());
+            }
             return new AgentChatResponseDto("❌ Update failed: " + e.getMessage(), AgentIntent.EDIT_LEAVE.name());
         }
     }

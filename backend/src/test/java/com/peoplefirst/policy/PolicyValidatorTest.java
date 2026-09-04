@@ -149,4 +149,15 @@ class PolicyValidatorTest {
         assertThrows(PolicyViolationException.class, () ->
                 policyValidator.validateLeaveApplication(employee, LeaveType.SICK, null, currentMonthDate, currentMonthDate, 1.0, false, null, appliedDate));
     }
+
+    @Test
+    @DisplayName("Backdate leave rejected with: You can't apply leave for backdate.")
+    void testBackdateLeaveRejected() {
+        LocalDate appliedDate = LocalDate.of(2026, 9, 10);
+        LocalDate backdate = LocalDate.of(2026, 9, 8);
+
+        PolicyViolationException ex = assertThrows(PolicyViolationException.class, () ->
+                policyValidator.validateLeaveApplication(employee, LeaveType.CASUAL, null, backdate, backdate, 1.0, false, null, appliedDate));
+        assertEquals("You can't apply leave for backdate.", ex.getMessage());
+    }
 }

@@ -74,7 +74,7 @@ public class IntentParser {
                 lower.contains("need leave") || lower.contains("want leave") || lower.contains("want to apply") ||
                 lower.contains("need to apply") || lower.contains("take a leave") || lower.contains("take off") ||
                 lower.contains("submit leave") || lower.contains("unable to apply") || lower.contains("cannot apply") ||
-                lower.contains("how to apply") ||
+                lower.contains("how to apply") || lower.contains("back date") || lower.contains("backdate") ||
                 (extractLeaveType(lower) != null && (extractDates(lower)[0] != null || lower.contains("leave") || lower.contains("off")))) {
             return AgentIntent.APPLY_LEAVE;
         }
@@ -208,6 +208,8 @@ public class IntentParser {
                 firstDate = LocalDate.now().plusDays(2);
             } else if (lower.contains("tomorrow")) {
                 firstDate = LocalDate.now().plusDays(1);
+            } else if (lower.contains("yesterday")) {
+                firstDate = LocalDate.now().minusDays(1);
             } else if (lower.contains("today")) {
                 firstDate = LocalDate.now();
             } else if (lower.contains("next week")) {

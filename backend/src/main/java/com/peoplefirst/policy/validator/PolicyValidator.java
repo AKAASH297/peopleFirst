@@ -33,8 +33,7 @@ public class PolicyValidator {
         // SPEC.md §5: Apply / cancel / edit leave before the actual leave date.
         // Leave cannot be applied normally after the leave date has already passed.
         if (startDate.isBefore(appliedDate)) {
-            throw new PolicyViolationException(
-                    "Leave cannot be applied retroactively after the leave date has passed. Please raise a support ticket instead.");
+            throw new PolicyViolationException("You can't apply leave for backdate.");
         }
 
         // SPEC.md §2: Role eligibility
