@@ -114,7 +114,7 @@ export const AgentChat = {
 
         <!-- Input row -->
         <form id="fullChatInputForm" class="chat-input-row" style="padding: 1rem 1.5rem; background: #fff;">
-          <input id="fullChatTextInput" type="text" class="chat-input" placeholder="Type a message or instruction for Kura..." autocomplete="off" style="padding: 0.75rem 1rem; border-radius: var(--radius-md);" />
+          <input id="fullChatTextInput" type="text" class="chat-input" placeholder="Type a message or instruction for Kura..." autocomplete="off" maxlength="2000" style="padding: 0.75rem 1rem; border-radius: var(--radius-md);" />
           <button type="submit" class="btn btn-primary" style="padding: 0 1.5rem; border-radius: var(--radius-md);">
             Send &rarr;
           </button>
@@ -213,13 +213,59 @@ export const AgentChat = {
 
   formatReply(text) {
     if (!text) return '';
-    return text
+    const lines = text.split('\n');
+    let html = '';
+    let i = 0;
+    while (i < lines.length) {
+      if (this.isTableStart(lines, i)) {
+        const rows = [];
+        let j = i;
+        while (j < lines.length && lines[j].startsWith('|')) {
+          rows.push(lines[j]);
+          j++;
+        }
+        html += this.renderTable(rows);
+        i = j;
+      } else {
+        html += this.formatInline(lines[i]);
+        if (i < lines.length - 1) html += '<br/>';
+        i++;
+      }
+    }
+    return html;
+  },
+
+  escapeHtml(s) {
+    return s
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;')
-      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-      .replace(/\n/g, '<br/>');
+      .replace(/'/g, '&#39;');
+  },
+
+  formatInline(line) {
+    return this.escapeHtml(line).replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+  },
+
+  isTableStart(lines, i) {
+    return i + 1 < lines.length
+      && lines[i].startsWith('|')
+      && lines[i + 1].startsWith('|')
+      && /^[\s|:\-]+$/.test(lines[i + 1]);
+  },
+
+  renderTable(rows) {
+    const cells = (row) => {
+      let t = row.trim();
+      if (t.startsWith('|')) t = t.slice(1);
+      if (t.endsWith('|')) t = t.slice(0, -1);
+      return t.split('|').map((c) => this.escapeHtml(c.trim()));
+    };
+    const header = cells(rows[0]).map((c) => `<th>${c}</th>`).join('');
+    const body = rows.slice(2)
+      .map((row) => `<tr>${cells(row).map((c) => `<td>${c}</td>`).join('')}</tr>`)
+      .join('');
+    return `<table class="kura-table"><thead><tr>${header}</tr></thead><tbody>${body}</tbody></table>`;
   }
 };

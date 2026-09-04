@@ -233,4 +233,25 @@ class AgentServiceAgenticTest {
         Mockito.verify(leaveService, Mockito.times(1)).cancelLeave(any(), eq(employee), anyString());
         assertTrue(response.isActionExecuted());
     }
+
+    @Test
+    void overlongMessageIsRefusedWithoutLlmCost() {
+        when(genAiClient.isConfigured()).thenReturn(true);
+        String longMessage = "x".repeat(2001);
+        AgentChatResponseDto response = agentService.processMessage(
+                new AgentChatRequestDto(longMessage, "conv-limit-a"));
+        assertTrue(response.getReply().contains("2000"));
+        assertFalse(response.isActionExecuted());
+        Mockito.verifyNoInteractions(genAiClient);
+    }
+
+    @Test
+    void exactly2000CharsStillGetsRuleGreeting() {
+        when(genAiClient.isConfigured()).thenReturn(false);
+        String message = "hello" + "x".repeat(1995);
+        assertEquals(2000, message.length());
+        AgentChatResponseDto response = agentService.processMessage(
+                new AgentChatRequestDto(message, "conv-limit-b"));
+        assertTrue(response.getReply().contains("Kura"));
+    }
 }

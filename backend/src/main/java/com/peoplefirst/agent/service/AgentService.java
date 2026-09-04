@@ -66,6 +66,8 @@ public class AgentService {
     private final Map<String, List<Map<String, String>>> conversations = new ConcurrentHashMap<>();
     private final Map<UUID, PendingAgentAction> pendingActions = new ConcurrentHashMap<>();
 
+    public static final int MAX_MESSAGE_LENGTH = 2000;
+
     private static final Set<String> CONFIRM_WORDS = Set.of("yes", "confirm", "proceed");
     private static final Set<String> DISCARD_WORDS = Set.of("no", "cancel", "discard", "abort", "stop");
 
@@ -91,6 +93,14 @@ public class AgentService {
         // Overriding rule: Identity comes strictly from SecurityContext -> DB
         User user = currentUserProvider.getCurrentUser();
         String message = request.getMessage() != null ? request.getMessage().trim() : "";
+        if (message.length() > MAX_MESSAGE_LENGTH) {
+            AgentChatResponseDto tooLong = new AgentChatResponseDto(
+                    "Please keep your message under 2000 characters (yours was " + message.length()
+                            + "). Try splitting it into smaller messages.",
+                    AgentIntent.UNKNOWN.name());
+            tooLong.setQuickReplies(List.of("Check my balances", "Apply for leave", "Company leave policies"));
+            return tooLong;
+        }
         if (genAiClient.isConfigured()) {
             return processAgentic(message, request.getConversationId(), user);
         }
@@ -461,6 +471,7 @@ public class AgentService {
         sb.append("- Late requests or retrospective corrections require raising a Support Ticket.\n");
         sb.append("- Campus Wellbeing perks: Zero-gravity massage chairs (Bldg 1, 4th Fl), Games lounge (Bldg 3, 3rd Fl), Psychologist counseling (Bldg 2, 2nd Fl), Guided Yoga (Bldg 1, Terrace).\n");
         sb.append("- Healthcare: Partner hospital OPD discounts available; OPD claims must be submitted within 90 days.\n");
+        sb.append("Formatting rule: NEVER use markdown tables (pipes) — this chat cannot render them. Present tabular data as bullet lists with bold labels (e.g. \"• **Sick Leave:** 16 days remaining\").\n");
         sb.append("Respond warmly, concisely, and empathetically. Keep markdown formatting clean.");
         return sb.toString();
     }
