@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kura AI Agent — Contractor Portal | peopleFirst</title>
+  <link rel="stylesheet" href="css/global.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/pages/portal.css">
+</head>
+<body style="background: linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%);">
+  <div class="contractor-container">
+    <div id="contractorAgentApp" style="height: 100%;"></div>
+  </div>
+
+  <script type="module">
+    import { AgentChat } from './js/features/agent/agentChat.js';
+    document.addEventListener('DOMContentLoaded', () => {
+      AgentChat.init('contractorAgentApp');
+    });
+  </script>
+</body>
+</html>

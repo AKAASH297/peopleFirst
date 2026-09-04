@@ -1,0 +1,2 @@
+# No external packages required.
+# Uses standard library Python 3.8+ (urllib, json, sys).
