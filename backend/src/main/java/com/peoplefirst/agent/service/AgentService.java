@@ -270,14 +270,14 @@ public class AgentService {
                 raw = Optional.empty();
             }
             if (raw.isEmpty()) {
-                return processRuleBased(new AgentChatRequestDto(message, conversationId), message, user);
+                return agentUnavailable();
             }
 
             JsonNode assistant;
             try {
                 assistant = mapper.readTree(raw.get());
             } catch (Exception e) {
-                return processRuleBased(new AgentChatRequestDto(message, conversationId), message, user);
+                return agentUnavailable();
             }
 
             String content = assistant.path("content").isNull()
@@ -378,7 +378,16 @@ public class AgentService {
         if (lastToolResponse != null) {
             return lastToolResponse;
         }
-        return processRuleBased(new AgentChatRequestDto(message, conversationId), message, user);
+        return agentUnavailable();
+    }
+
+    private AgentChatResponseDto agentUnavailable() {
+        AgentChatResponseDto response = new AgentChatResponseDto(
+                "Kura's AI brain isn't reachable right now — please try again in a moment. Nothing was submitted.",
+                AgentIntent.UNKNOWN.name());
+        response.setActionExecuted(false);
+        response.setQuickReplies(List.of("Check my balances", "Apply for leave", "Company leave policies"));
+        return response;
     }
 
     private boolean isConfirmReply(String lower) {

@@ -490,4 +490,28 @@ class AgentServiceAgenticTest {
         assertTrue(enrolled.getReply().contains("Paws & Care Animal Rescue"));
         assertTrue(enrolled.getReply().toLowerCase().contains("intranet banner"));
     }
+
+    @Test
+    void configuredButEndpointDownReturnsUnavailableNotRuleReply() {
+        when(genAiClient.chatWithTools(anyString(), anyList(), anyList()))
+                .thenReturn(Optional.empty());
+
+        AgentChatResponseDto response = agentService.processMessage(
+                new AgentChatRequestDto("hello", "conv-unavail-a"));
+
+        assertTrue(response.getReply().contains("isn't reachable"));
+        assertFalse(response.isActionExecuted());
+    }
+
+    @Test
+    void configuredButGarbageResponseReturnsUnavailable() {
+        when(genAiClient.chatWithTools(anyString(), anyList(), anyList()))
+                .thenReturn(Optional.of("not-json{{{"));
+
+        AgentChatResponseDto response = agentService.processMessage(
+                new AgentChatRequestDto("how many sick days do I have left?", "conv-unavail-b"));
+
+        assertTrue(response.getReply().contains("isn't reachable"));
+        assertFalse(response.isActionExecuted());
+    }
 }
