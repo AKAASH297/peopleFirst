@@ -239,4 +239,96 @@ class PeopleFirstIntegrationTest {
                 .andExpect(jsonPath("$.actionExecuted").value(true))
                 .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("Leave Request Submitted Successfully!")));
     }
+
+    @Test
+    @DisplayName("Manager views pending approvals and approves via Agent")
+    void testManagerApprovalsViaAgent() throws Exception {
+        // 1. Employee creates a leave
+        String empToken = getJwtToken("employee1", "password123", "WEB");
+        AgentChatRequestDto leaveReq = new AgentChatRequestDto("Apply casual leave for 1 day on next Monday", "emp-apply");
+        mockMvc.perform(post("/api/agent/chat")
+                        .header("Authorization", "Bearer " + empToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(leaveReq)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.actionExecuted").value(true));
+
+        // 2. Manager checks pending approvals
+        String mgrToken = getJwtToken("manager1", "password123", "AGENT");
+        AgentChatRequestDto viewPending = new AgentChatRequestDto("Show pending approvals", "mgr-view");
+        mockMvc.perform(post("/api/agent/chat")
+                        .header("Authorization", "Bearer " + mgrToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(viewPending)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.intent").value("VIEW_PENDING_APPROVALS"))
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("Pending Leave Requests Awaiting Your Review")));
+
+        // 3. Manager approves leave via Agent
+        AgentChatRequestDto approveReq = new AgentChatRequestDto("Approve leave request because looks good", "mgr-approve");
+        mockMvc.perform(post("/api/agent/chat")
+                        .header("Authorization", "Bearer " + mgrToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(approveReq)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.actionExecuted").value(true))
+                .andExpect(jsonPath("$.intent").value("APPROVE_LEAVE"))
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("APPROVED")));
+    }
+
+    @Test
+    @DisplayName("Manager checks direct reportees balances via Agent")
+    void testManagerCheckTeamBalancesViaAgent() throws Exception {
+        String mgrToken = getJwtToken("manager1", "password123", "AGENT");
+        AgentChatRequestDto req = new AgentChatRequestDto("Show my team leave balances", "mgr-team-bal");
+        mockMvc.perform(post("/api/agent/chat")
+                        .header("Authorization", "Bearer " + mgrToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.intent").value("CHECK_TEAM_BALANCES"))
+                .andExpect(jsonPath("$.actionExecuted").value(true))
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("Direct Reportees Leave Balances")));
+    }
+
+    @Test
+    @DisplayName("Employee raises support ticket via Agent")
+    void testRaiseTicketViaAgent() throws Exception {
+        String empToken = getJwtToken("employee1", "password123", "AGENT");
+        AgentChatRequestDto req = new AgentChatRequestDto("Raise ticket: missed the cutoff deadline due to network error", "emp-tkt");
+        mockMvc.perform(post("/api/agent/chat")
+                        .header("Authorization", "Bearer " + empToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.intent").value("RAISE_TICKET"))
+                .andExpect(jsonPath("$.actionExecuted").value(true))
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("Support Ticket Created Successfully!")))
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("TKT-")));
+    }
+
+    @Test
+    @DisplayName("Admin direct database edit via Agent")
+    void testAdminDirectEditViaAgent() throws Exception {
+        // Ensure there is at least one leave in DB
+        String empToken = getJwtToken("employee2", "password123", "AGENT");
+        AgentChatRequestDto apply = new AgentChatRequestDto("Apply casual leave for 1 day next Friday", "emp2-apply");
+        mockMvc.perform(post("/api/agent/chat")
+                        .header("Authorization", "Bearer " + empToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(apply)))
+                .andExpect(status().isOk());
+
+        // Admin invokes direct DB edit
+        String adminToken = getJwtToken("admin1", "password123", "AGENT");
+        AgentChatRequestDto directEdit = new AgentChatRequestDto("Directly update leave DB to APPROVED", "admin-direct");
+        mockMvc.perform(post("/api/agent/chat")
+                        .header("Authorization", "Bearer " + adminToken)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(directEdit)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.intent").value("ADMIN_DIRECT_EDIT"))
+                .andExpect(jsonPath("$.actionExecuted").value(true))
+                .andExpect(jsonPath("$.reply").value(org.hamcrest.Matchers.containsString("Admin Direct-DB-Edit Completed!")));
+    }
 }

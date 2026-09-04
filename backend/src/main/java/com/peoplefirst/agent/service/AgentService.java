@@ -1,13 +1,18 @@
 package com.peoplefirst.agent.service;
 
+import com.peoplefirst.agent.client.GenAiClient;
 import com.peoplefirst.agent.dto.AgentChatRequestDto;
 import com.peoplefirst.agent.dto.AgentChatResponseDto;
 import com.peoplefirst.agent.intent.AgentIntent;
 import com.peoplefirst.agent.intent.IntentParser;
+import com.peoplefirst.approval.dto.ApprovalActionDto;
+import com.peoplefirst.approval.service.ApprovalService;
 import com.peoplefirst.auth.security.CurrentUserProvider;
+import com.peoplefirst.leave.dto.AdminDirectEditDto;
 import com.peoplefirst.leave.dto.CreateLeaveRequestDto;
 import com.peoplefirst.leave.dto.LeaveBalanceDto;
 import com.peoplefirst.leave.dto.LeaveResponseDto;
+import com.peoplefirst.leave.dto.UpdateLeaveRequestDto;
 import com.peoplefirst.leave.entity.LeaveBalance;
 import com.peoplefirst.leave.entity.LeaveStatus;
 import com.peoplefirst.leave.mapper.LeaveMapper;
@@ -17,12 +22,17 @@ import com.peoplefirst.policy.dto.PolicyResponseDto;
 import com.peoplefirst.policy.entity.LeaveType;
 import com.peoplefirst.policy.service.PolicyService;
 import com.peoplefirst.policy.validator.PolicyViolationException;
+import com.peoplefirst.ticket.dto.CreateTicketRequestDto;
+import com.peoplefirst.ticket.dto.TicketResponseDto;
+import com.peoplefirst.ticket.service.TicketService;
+import com.peoplefirst.user.entity.Role;
 import com.peoplefirst.user.entity.User;
+import com.peoplefirst.user.service.UserService;
 import com.peoplefirst.wellbeing.dto.AmenityDto;
 import com.peoplefirst.wellbeing.dto.HospitalPartnerDto;
+import com.peoplefirst.wellbeing.dto.ResortPartnerDto;
 import com.peoplefirst.wellbeing.dto.WellbeingSuggestionDto;
 import com.peoplefirst.wellbeing.service.WellbeingService;
-import com.peoplefirst.agent.client.GenAiClient;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
@@ -34,6 +44,8 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @Service
@@ -47,6 +59,9 @@ public class AgentService {
     private final WellbeingService wellbeingService;
     private final LeaveMapper leaveMapper;
     private final GenAiClient genAiClient;
+    private final ApprovalService approvalService;
+    private final TicketService ticketService;
+    private final UserService userService;
 
     // Multi-turn conversational leave draft store keyed by User UUID
     private final Map<UUID, PendingLeaveDraft> userDrafts = new ConcurrentHashMap<>();
@@ -58,7 +73,10 @@ public class AgentService {
                         PolicyService policyService,
                         WellbeingService wellbeingService,
                         LeaveMapper leaveMapper,
-                        GenAiClient genAiClient) {
+                        GenAiClient genAiClient,
+                        ApprovalService approvalService,
+                        TicketService ticketService,
+                        UserService userService) {
         this.intentParser = intentParser;
         this.currentUserProvider = currentUserProvider;
         this.leaveService = leaveService;
@@ -67,6 +85,9 @@ public class AgentService {
         this.wellbeingService = wellbeingService;
         this.leaveMapper = leaveMapper;
         this.genAiClient = genAiClient;
+        this.approvalService = approvalService;
+        this.ticketService = ticketService;
+        this.userService = userService;
     }
 
     public AgentChatResponseDto processMessage(AgentChatRequestDto request) {
@@ -100,11 +121,19 @@ public class AgentService {
         // 2. If the user has an active draft and did not trigger a separate inquiry intent,
         // treat message as follow-up to the active draft
         boolean isExplicitOtherIntent = (intent == AgentIntent.CHECK_BALANCE ||
+                intent == AgentIntent.CHECK_TEAM_BALANCES ||
                 intent == AgentIntent.VIEW_LEAVES ||
+                intent == AgentIntent.VIEW_PENDING_APPROVALS ||
+                intent == AgentIntent.APPROVE_LEAVE ||
+                intent == AgentIntent.REJECT_LEAVE ||
+                intent == AgentIntent.SEND_BACK_LEAVE ||
                 intent == AgentIntent.WELLBEING_INQUIRY ||
                 intent == AgentIntent.CANCEL_LEAVE ||
+                intent == AgentIntent.EDIT_LEAVE ||
                 intent == AgentIntent.CHECK_POLICY ||
-                intent == AgentIntent.STRESS_EXPRESSION);
+                intent == AgentIntent.STRESS_EXPRESSION ||
+                intent == AgentIntent.RAISE_TICKET ||
+                intent == AgentIntent.ADMIN_DIRECT_EDIT);
 
         if (draft != null && !isExplicitOtherIntent) {
             return continueLeaveDraft(message, draft, user);
@@ -115,12 +144,24 @@ public class AgentService {
                 return handleGreeting(user);
             case CHECK_BALANCE:
                 return handleCheckBalance(message, user);
+            case CHECK_TEAM_BALANCES:
+                return handleCheckTeamBalances(message, user);
             case APPLY_LEAVE:
                 return handleApplyLeave(message, user);
             case CANCEL_LEAVE:
                 return handleCancelLeave(message, user);
+            case EDIT_LEAVE:
+                return handleEditLeave(message, user);
             case VIEW_LEAVES:
                 return handleViewLeaves(user);
+            case VIEW_PENDING_APPROVALS:
+                return handleViewPendingApprovals(user);
+            case APPROVE_LEAVE:
+                return handleApproveLeave(message, user);
+            case REJECT_LEAVE:
+                return handleRejectLeave(message, user);
+            case SEND_BACK_LEAVE:
+                return handleSendBackLeave(message, user);
             case CHECK_POLICY:
                 return handleCheckPolicy(user);
             case STRESS_EXPRESSION:
@@ -129,6 +170,10 @@ public class AgentService {
                 return handleWellbeingInquiry(message, user);
             case TICKET_INQUIRY:
                 return handleTicketInquiry(user);
+            case RAISE_TICKET:
+                return handleRaiseTicket(message, user);
+            case ADMIN_DIRECT_EDIT:
+                return handleAdminDirectEdit(message, user);
             case UNKNOWN:
             default:
                 if (draft != null) {
@@ -425,9 +470,20 @@ public class AgentService {
                 sb.append("• **Combined With:** ").append(created.getCombinedWithType().getDisplayName()).append("\n");
             }
 
-            if (leaveType == LeaveType.SICK && daysBetween > 2) {
-                sb.append("• **Medical Certificate:** Digital placeholder attached for manager review (`DOC-")
-                        .append(UUID.randomUUID().toString().substring(0, 8).toUpperCase()).append("`)\n");
+            if (leaveType == LeaveType.SICK) {
+                if (daysBetween > 2) {
+                    sb.append("• **Medical Certificate:** Digital placeholder attached for manager review (`DOC-")
+                            .append(UUID.randomUUID().toString().substring(0, 8).toUpperCase()).append("`)\n");
+                }
+                sb.append("\n🏥 **Health & Medical Care Support (Kura Concierge):**\n")
+                        .append("• Did you consult a doctor? If yes, remember to submit your OPD/Hospitalization bills within 90 days for corporate insurance reimbursement ([Insurance Claims Portal](https://insurance.peoplefirst.internal/claims)).\n")
+                        .append("• Partner network hospitals in **").append(user.getBaseLocation()).append("** offering corporate OPD discounts are available in the amenities catalog.\n");
+
+                if (isHalfDay) {
+                    sb.append("• 🛌 **Office Sick Room:** Would you like to take rest in the office sick room before heading home? (Building 2, 1st Floor, Room 104 — on-duty nurse available).\n");
+                }
+            } else if (leaveType == LeaveType.VOLUNTEERING) {
+                sb.append("\n🤝 **Corporate Volunteering:** Thank you for giving back! Active company CSR chapters: Corporate Green Earth Initiative, STEM Mentorship for Schools, and Blood Donation Drive. You are welcome to participate under the peopleFirst company banner!\n");
             }
 
             AgentChatResponseDto response = new AgentChatResponseDto(sb.toString(), AgentIntent.APPLY_LEAVE.name());
@@ -508,8 +564,390 @@ public class AgentService {
         response.setActionExecuted(true);
         response.setActionName("CANCEL_LEAVE");
         response.setActionData(cancelled);
-        response.setQuickReplies(List.of("Check my balances", "Apply for new leave"));
+        response.setQuickReplies(getPostActionQuickReplies(user));
         return response;
+    }
+
+    private AgentChatResponseDto handleEditLeave(String message, User user) {
+        List<LeaveResponseDto> userLeaves = leaveService.getLeavesForUser(user.getId());
+        List<LeaveResponseDto> editable = userLeaves.stream()
+                .filter(l -> (l.getStatus() == LeaveStatus.PENDING || l.getStatus() == LeaveStatus.RETURNED) &&
+                        !l.getStartDate().isBefore(LocalDate.now()))
+                .collect(Collectors.toList());
+
+        if (editable.isEmpty()) {
+            return new AgentChatResponseDto(
+                    "You do not have any upcoming pending or returned leave requests eligible for editing. To request adjustments for leaves whose dates have passed, please raise a support ticket.",
+                    AgentIntent.EDIT_LEAVE.name()
+            );
+        }
+
+        // Identify target leave
+        LeaveResponseDto target = editable.get(0);
+        UUID reqUuid = intentParser.extractUuid(message);
+        if (reqUuid != null) {
+            for (LeaveResponseDto l : editable) {
+                if (l.getId().equals(reqUuid)) {
+                    target = l;
+                    break;
+                }
+            }
+        }
+
+        LocalDate[] dates = intentParser.extractDates(message);
+        LeaveType newType = intentParser.extractLeaveType(message);
+        if (newType == null) {
+            newType = target.getLeaveType();
+        }
+
+        if (dates[0] == null) {
+            String id8 = target.getId().toString().substring(0, 8);
+            AgentChatResponseDto response = new AgentChatResponseDto(
+                    "You can edit your **" + target.getLeaveTypeDisplayName() + "** (`" + id8 + "` from " +
+                            target.getStartDate() + " to " + target.getEndDate() + ").\n\n" +
+                            "Please specify the new start and end dates (e.g. 'change dates to tomorrow' or 'YYYY-MM-DD to YYYY-MM-DD').",
+                    AgentIntent.EDIT_LEAVE.name()
+            );
+            response.setQuickReplies(List.of("Tomorrow", "Next Week", "Cancel"));
+            return response;
+        }
+
+        LocalDate startDate = dates[0];
+        LocalDate endDate = dates[1] != null ? dates[1] : startDate;
+
+        UpdateLeaveRequestDto updateDto = new UpdateLeaveRequestDto();
+        updateDto.setLeaveType(newType);
+        updateDto.setStartDate(startDate);
+        updateDto.setEndDate(endDate);
+        updateDto.setHalfDay(intentParser.extractHalfDay(message));
+        updateDto.setReason("Updated via Kura AI Agent: " + message);
+
+        try {
+            LeaveResponseDto updated = leaveService.editLeave(target.getId(), updateDto, user);
+            String reply = "✏️ **Leave Request Updated Successfully!**\n\n" +
+                    "• **Type:** " + updated.getLeaveTypeDisplayName() + "\n" +
+                    "• **New Dates:** " + updated.getStartDate() + " to " + updated.getEndDate() + " (" + updated.getTotalDays() + " day" + (updated.getTotalDays() > 1 ? "s" : "") + ")\n" +
+                    "• **Status:** " + updated.getStatus() + "\n\n" +
+                    "Your manager will review the updated dates.";
+
+            AgentChatResponseDto response = new AgentChatResponseDto(reply, AgentIntent.EDIT_LEAVE.name());
+            response.setActionExecuted(true);
+            response.setActionName("EDIT_LEAVE");
+            response.setActionData(updated);
+            response.setQuickReplies(getPostActionQuickReplies(user));
+            return response;
+        } catch (Exception e) {
+            return new AgentChatResponseDto("❌ Update failed: " + e.getMessage(), AgentIntent.EDIT_LEAVE.name());
+        }
+    }
+
+    private AgentChatResponseDto handleViewPendingApprovals(User user) {
+        if (user.getRole() == Role.EMPLOYEE && !user.isContractor()) {
+            return new AgentChatResponseDto(
+                    "Leave approval access is reserved for Managers, Supervisors, and Administrators.",
+                    AgentIntent.VIEW_PENDING_APPROVALS.name()
+            );
+        }
+
+        List<LeaveResponseDto> pending = approvalService.getPendingApprovals(user);
+
+        if (pending.isEmpty()) {
+            AgentChatResponseDto response = new AgentChatResponseDto(
+                    "You do not have any pending leave requests awaiting approval at this time. 🎉",
+                    AgentIntent.VIEW_PENDING_APPROVALS.name()
+            );
+            response.setQuickReplies(getPostActionQuickReplies(user));
+            return response;
+        }
+
+        StringBuilder sb = new StringBuilder("📋 **Pending Leave Requests Awaiting Your Review (")
+                .append(pending.size()).append(")**:\n\n");
+
+        List<String> chips = new ArrayList<>();
+        int count = 0;
+        for (LeaveResponseDto l : pending) {
+            if (count++ < 5) {
+                String id8 = l.getId().toString().substring(0, 8);
+                sb.append("• **").append(l.getEmployeeName()).append("** (`").append(id8).append("`)\n")
+                        .append("   - ").append(l.getLeaveTypeDisplayName()).append(": ").append(l.getStartDate()).append(" to ").append(l.getEndDate())
+                        .append(" (").append(l.getTotalDays()).append(" day").append(l.getTotalDays() > 1 ? "s" : "").append(")\n")
+                        .append("   - Reason: _").append(l.getReason() != null ? l.getReason() : "No reason provided").append("_\n\n");
+            }
+            if (chips.size() < 4) {
+                String id8 = l.getId().toString().substring(0, 8);
+                chips.add("Approve " + id8);
+                chips.add("Reject " + id8);
+            }
+        }
+        chips.add("Team balances");
+
+        AgentChatResponseDto response = new AgentChatResponseDto(sb.toString(), AgentIntent.VIEW_PENDING_APPROVALS.name());
+        response.setActionExecuted(true);
+        response.setActionName("VIEW_PENDING_APPROVALS");
+        response.setActionData(pending);
+        response.setQuickReplies(chips);
+        return response;
+    }
+
+    private AgentChatResponseDto handleApproveLeave(String message, User user) {
+        if (user.getRole() == Role.EMPLOYEE && !user.isContractor()) {
+            return new AgentChatResponseDto("You do not have permission to approve leave requests.", AgentIntent.APPROVE_LEAVE.name());
+        }
+
+        LeaveResponseDto target = resolveTargetLeave(message, user);
+        if (target == null) {
+            return new AgentChatResponseDto(
+                    "Please specify which leave request you would like to approve (e.g. 'Approve leave <id>' or check 'Pending approvals').",
+                    AgentIntent.APPROVE_LEAVE.name()
+            );
+        }
+
+        ApprovalActionDto dto = new ApprovalActionDto("Approved via Kura AI Agent by " + user.getFullName());
+        try {
+            LeaveResponseDto approved = approvalService.approveLeave(target.getId(), dto, user);
+            String reply = "✅ Leave request for **" + approved.getEmployeeName() + "** (" +
+                    approved.getLeaveTypeDisplayName() + " from " + approved.getStartDate() + " to " +
+                    approved.getEndDate() + ") has been **APPROVED**.\n\n" +
+                    "Leave balance has been committed and an audit log recorded.";
+
+            AgentChatResponseDto response = new AgentChatResponseDto(reply, AgentIntent.APPROVE_LEAVE.name());
+            response.setActionExecuted(true);
+            response.setActionName("APPROVE_LEAVE");
+            response.setActionData(approved);
+            response.setQuickReplies(getPostActionQuickReplies(user));
+            return response;
+        } catch (Exception e) {
+            return new AgentChatResponseDto("❌ Approval failed: " + e.getMessage(), AgentIntent.APPROVE_LEAVE.name());
+        }
+    }
+
+    private AgentChatResponseDto handleRejectLeave(String message, User user) {
+        if (user.getRole() == Role.EMPLOYEE && !user.isContractor()) {
+            return new AgentChatResponseDto("You do not have permission to reject leave requests.", AgentIntent.REJECT_LEAVE.name());
+        }
+
+        LeaveResponseDto target = resolveTargetLeave(message, user);
+        if (target == null) {
+            return new AgentChatResponseDto(
+                    "Please specify which leave request to reject (e.g. 'Reject leave <id>').",
+                    AgentIntent.REJECT_LEAVE.name()
+            );
+        }
+
+        String comment = extractActionComment(message, "Rejected via Kura AI Agent");
+        ApprovalActionDto dto = new ApprovalActionDto(comment);
+
+        try {
+            LeaveResponseDto rejected = approvalService.rejectLeave(target.getId(), dto, user);
+            String reply = "❌ Leave request for **" + rejected.getEmployeeName() + "** (" +
+                    rejected.getLeaveTypeDisplayName() + ") has been **REJECTED**.\n" +
+                    "• Reason: _" + comment + "_\n" +
+                    "• The reserved quota has been released back to their available balance.";
+
+            AgentChatResponseDto response = new AgentChatResponseDto(reply, AgentIntent.REJECT_LEAVE.name());
+            response.setActionExecuted(true);
+            response.setActionName("REJECT_LEAVE");
+            response.setActionData(rejected);
+            response.setQuickReplies(getPostActionQuickReplies(user));
+            return response;
+        } catch (Exception e) {
+            return new AgentChatResponseDto("❌ Rejection failed: " + e.getMessage(), AgentIntent.REJECT_LEAVE.name());
+        }
+    }
+
+    private AgentChatResponseDto handleSendBackLeave(String message, User user) {
+        if (user.getRole() == Role.EMPLOYEE && !user.isContractor()) {
+            return new AgentChatResponseDto("You do not have permission to send back leave requests.", AgentIntent.SEND_BACK_LEAVE.name());
+        }
+
+        LeaveResponseDto target = resolveTargetLeave(message, user);
+        if (target == null) {
+            return new AgentChatResponseDto(
+                    "Please specify which leave request to send back (e.g. 'Send back leave <id>').",
+                    AgentIntent.SEND_BACK_LEAVE.name()
+            );
+        }
+
+        String comment = extractActionComment(message, "Sent back for modification via Kura AI Agent");
+        ApprovalActionDto dto = new ApprovalActionDto(comment);
+
+        try {
+            LeaveResponseDto returned = approvalService.sendBackLeave(target.getId(), dto, user);
+            String reply = "↩️ Leave request for **" + returned.getEmployeeName() + "** has been **SENT BACK** for revision.\n" +
+                    "• Note for employee: _" + comment + "_\n" +
+                    "• The employee can now edit their dates or upload documents and resubmit.";
+
+            AgentChatResponseDto response = new AgentChatResponseDto(reply, AgentIntent.SEND_BACK_LEAVE.name());
+            response.setActionExecuted(true);
+            response.setActionName("SEND_BACK_LEAVE");
+            response.setActionData(returned);
+            response.setQuickReplies(getPostActionQuickReplies(user));
+            return response;
+        } catch (Exception e) {
+            return new AgentChatResponseDto("❌ Send-back failed: " + e.getMessage(), AgentIntent.SEND_BACK_LEAVE.name());
+        }
+    }
+
+    private AgentChatResponseDto handleCheckTeamBalances(String message, User user) {
+        if (user.getRole() == Role.EMPLOYEE && !user.isContractor()) {
+            return new AgentChatResponseDto("Team balance oversight is accessible to Managers, Supervisors, and Administrators.", AgentIntent.CHECK_TEAM_BALANCES.name());
+        }
+
+        int year = LocalDate.now().getYear();
+        List<User> reports = userService.getDirectReportEntities(user.getId());
+        if (reports.isEmpty() && user.getRole() == Role.ADMIN) {
+            reports = userService.getAllUserEntities().stream()
+                    .filter(u -> u.getRole() == Role.EMPLOYEE)
+                    .limit(5)
+                    .collect(Collectors.toList());
+        }
+
+        if (reports.isEmpty()) {
+            return new AgentChatResponseDto("You do not currently have any direct reportees assigned.", AgentIntent.CHECK_TEAM_BALANCES.name());
+        }
+
+        StringBuilder sb = new StringBuilder("👥 **Direct Reportees Leave Balances (")
+                .append(year).append(")**:\n\n");
+
+        for (User r : reports) {
+            leaveBalanceService.initializeUserBalancesIfAbsent(r, year);
+            List<LeaveBalance> balances = leaveBalanceService.getUserBalances(r.getId(), year);
+
+            sb.append("• **").append(r.getFullName()).append("** (").append(r.getDepartment()).append("):\n");
+            for (LeaveBalance b : balances) {
+                sb.append("   - ").append(b.getLeaveType().getDisplayName()).append(": ")
+                        .append(b.getRemainingDays()).append(" remaining (")
+                        .append(b.getUsedDays()).append(" used, ")
+                        .append(b.getPendingDays()).append(" pending)\n");
+            }
+            sb.append("\n");
+        }
+
+        AgentChatResponseDto response = new AgentChatResponseDto(sb.toString(), AgentIntent.CHECK_TEAM_BALANCES.name());
+        response.setActionExecuted(true);
+        response.setActionName("CHECK_TEAM_BALANCES");
+        response.setQuickReplies(getPostActionQuickReplies(user));
+        return response;
+    }
+
+    private AgentChatResponseDto handleRaiseTicket(String message, User user) {
+        String cleanSubject;
+        String lower = message.toLowerCase();
+        if (lower.contains("cutoff")) {
+            cleanSubject = "Submission after cutoff exception";
+        } else if (lower.contains("error") || lower.contains("technical")) {
+            cleanSubject = "Technical issue during leave application";
+        } else if (lower.contains("retro") || lower.contains("correction") || lower.contains("past")) {
+            cleanSubject = "Post-date retrospective leave adjustment";
+        } else {
+            cleanSubject = "Leave policy exception / assistance";
+        }
+
+        CreateTicketRequestDto ticketDto = new CreateTicketRequestDto(
+                "POLICY_EXCEPTION",
+                cleanSubject,
+                message,
+                null
+        );
+
+        TicketResponseDto created = ticketService.createTicket(ticketDto, user);
+
+        String reply = "🎫 **Support Ticket Created Successfully!**\n\n" +
+                "• **Ticket Ref:** `" + created.getTicketNumber() + "`\n" +
+                "• **Subject:** " + created.getSubject() + "\n" +
+                "• **Status:** " + created.getStatus() + "\n\n" +
+                "Our HR Operations & Policy Exceptions desk has received your ticket and will assist you.";
+
+        AgentChatResponseDto response = new AgentChatResponseDto(reply, AgentIntent.RAISE_TICKET.name());
+        response.setActionExecuted(true);
+        response.setActionName("RAISE_TICKET");
+        response.setActionData(created);
+        response.setQuickReplies(getPostActionQuickReplies(user));
+        return response;
+    }
+
+    private AgentChatResponseDto handleAdminDirectEdit(String message, User user) {
+        if (user.getRole() != Role.ADMIN) {
+            return new AgentChatResponseDto("Direct database edits are restricted strictly to Administrators.", AgentIntent.ADMIN_DIRECT_EDIT.name());
+        }
+
+        UUID leaveId = intentParser.extractUuid(message);
+        if (leaveId == null) {
+            List<LeaveResponseDto> all = leaveService.getAllLeavesOrgWide();
+            if (!all.isEmpty()) {
+                leaveId = all.get(0).getId();
+            } else {
+                return new AgentChatResponseDto("Please provide the leave UUID to update directly (e.g. 'direct edit <UUID> to APPROVED').", AgentIntent.ADMIN_DIRECT_EDIT.name());
+            }
+        }
+
+        String lower = message.toLowerCase();
+        LeaveStatus targetStatus = LeaveStatus.APPROVED;
+        if (lower.contains("reject")) targetStatus = LeaveStatus.REJECTED;
+        else if (lower.contains("cancel")) targetStatus = LeaveStatus.CANCELLED;
+        else if (lower.contains("pending")) targetStatus = LeaveStatus.PENDING;
+
+        AdminDirectEditDto dto = new AdminDirectEditDto();
+        dto.setStatus(targetStatus);
+        dto.setAuditComment("Direct database status override performed via Kura AI Agent by " + user.getFullName());
+
+        try {
+            LeaveResponseDto updated = leaveService.adminDirectEdit(leaveId, dto, user);
+            String reply = "🛠️ **Admin Direct-DB-Edit Completed!**\n\n" +
+                    "• **Leave ID:** `" + updated.getId() + "`\n" +
+                    "• **Employee:** " + updated.getEmployeeName() + "\n" +
+                    "• **New Status:** **" + updated.getStatus() + "**\n" +
+                    "• **Audit Trail:** Distinctly audited with tag `ADMIN_DIRECT_EDIT` (`adminDirectEdit = true`).";
+
+            AgentChatResponseDto response = new AgentChatResponseDto(reply, AgentIntent.ADMIN_DIRECT_EDIT.name());
+            response.setActionExecuted(true);
+            response.setActionName("ADMIN_DIRECT_EDIT");
+            response.setActionData(updated);
+            response.setQuickReplies(List.of("Pending approvals", "Org-wide leaves", "Check my balances"));
+            return response;
+        } catch (Exception e) {
+            return new AgentChatResponseDto("❌ Admin direct-DB-edit failed: " + e.getMessage(), AgentIntent.ADMIN_DIRECT_EDIT.name());
+        }
+    }
+
+    private LeaveResponseDto resolveTargetLeave(String message, User user) {
+        UUID uuid = intentParser.extractUuid(message);
+        if (uuid != null) {
+            try {
+                return leaveService.getLeaveById(uuid);
+            } catch (Exception ignored) {}
+        }
+        // Check 8-char hex prefix
+        Matcher m8 = Pattern.compile("([a-f0-9]{8})", Pattern.CASE_INSENSITIVE).matcher(message);
+        if (m8.find()) {
+            String prefix = m8.group(1).toLowerCase();
+            List<LeaveResponseDto> all = approvalService.getPendingApprovals(user);
+            for (LeaveResponseDto l : all) {
+                if (l.getId().toString().toLowerCase().startsWith(prefix)) {
+                    return l;
+                }
+            }
+        }
+        // Fallback: earliest pending request
+        List<LeaveResponseDto> pending = approvalService.getPendingApprovals(user);
+        return pending.isEmpty() ? null : pending.get(0);
+    }
+
+    private String extractActionComment(String message, String defaultComment) {
+        String lower = message.toLowerCase();
+        int idx = lower.indexOf("because");
+        if (idx != -1 && idx + 7 < message.length()) {
+            return message.substring(idx + 7).trim();
+        }
+        idx = lower.indexOf("reason:");
+        if (idx != -1 && idx + 7 < message.length()) {
+            return message.substring(idx + 7).trim();
+        }
+        idx = lower.indexOf("comment:");
+        if (idx != -1 && idx + 8 < message.length()) {
+            return message.substring(idx + 8).trim();
+        }
+        return defaultComment;
     }
 
     private AgentChatResponseDto handleViewLeaves(User user) {

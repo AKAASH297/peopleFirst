@@ -17,7 +17,7 @@ python3 agent/agent_runner.py
 ```
 
 3. Log in with any demo account:
-   - `contractor1` / `password123` (Contractor — Agent Only)
+   - `contractor1` / `password123` (Contractor Agent Only)
    - `employee1` / `password123` (Permanent Employee)
    - `manager1` / `password123` (Manager)
    - `admin1` / `password123` (Administrator)

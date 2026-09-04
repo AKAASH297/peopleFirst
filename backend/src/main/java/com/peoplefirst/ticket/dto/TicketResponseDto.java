@@ -24,6 +24,10 @@ public class TicketResponseDto {
         return id;
     }
 
+    public String getTicketNumber() {
+        return "TKT-" + (id != null ? id.toString().substring(0, 8).toUpperCase() : "0000");
+    }
+
     public void setId(UUID id) {
         this.id = id;
     }
