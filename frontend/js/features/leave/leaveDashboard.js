@@ -46,7 +46,6 @@ export const LeaveDashboard = {
                 <th>Dates & Duration</th>
                 <th>Status</th>
                 <th>Reason</th>
-                <th style="text-align: right;">Action</th>
               </tr>
             </thead>
             <tbody id="recentLeavesTbody">
@@ -121,17 +120,7 @@ export const LeaveDashboard = {
       const tbody = document.getElementById('recentLeavesTbody');
       if (leaves && leaves.length) {
         const recent = leaves.slice(0, 5);
-        tbody.innerHTML = recent.map(l => {
-          const actionBtn = `<button class="btn btn-outline btn-sm view-leave-btn" data-id="${l.id}">Details</button>`;
-          return LeaveCard.renderLeaveRow(l, actionBtn);
-        }).join('');
-
-        document.querySelectorAll('.view-leave-btn').forEach(btn => {
-          btn.addEventListener('click', () => {
-            const id = btn.getAttribute('data-id');
-            Router.navigate('myLeaves', { selectedId: id });
-          });
-        });
+        tbody.innerHTML = recent.map(l => LeaveCard.renderLeaveRow(l, '')).join('');
       } else {
         tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 2rem;">No leave requests yet. Click "Apply for Leave" above to get started.</td></tr>';
       }

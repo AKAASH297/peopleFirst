@@ -16,7 +16,7 @@ export const LeaveCard = {
     `;
   },
 
-  renderLeaveRow(leave, actionsHtml = '') {
+  renderLeaveRow(leave, actionsHtml = null) {
     return `
       <tr>
         <td>
@@ -31,7 +31,7 @@ export const LeaveCard = {
         <td style="max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
           ${leave.reason || '—'}
         </td>
-        <td style="text-align: right;">${actionsHtml}</td>
+        ${actionsHtml !== null ? `<td style="text-align: right;">${actionsHtml}</td>` : ''}
       </tr>
     `;
   }
