@@ -50,10 +50,10 @@ export const TeamBalancesView = {
         <tr>
           <td style="font-weight: 600;">${b.employeeName || 'Employee'}</td>
           <td>${b.leaveTypeDisplayName}</td>
-          <td>${b.allocatedDays}</td>
-          <td><strong style="color:var(--danger);">${b.usedDays}</strong></td>
-          <td><span style="color:#d97706;">${b.pendingDays}</span></td>
-          <td><strong style="color:var(--primary); font-size:1rem;">${b.remainingDays}</strong></td>
+          <td>${FormatUtils.formatDays(b.allocatedDays)}</td>
+          <td><strong style="color:var(--danger);">${FormatUtils.formatDays(b.usedDays)}</strong></td>
+          <td><span style="color:#d97706;">${FormatUtils.formatDays(b.pendingDays)}</span></td>
+          <td><strong style="color:var(--primary); font-size:1rem;">${FormatUtils.formatDays(b.remainingDays)}</strong></td>
         </tr>
       `).join('');
     } catch (err) {

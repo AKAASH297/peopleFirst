@@ -33,6 +33,16 @@ export const agentApi = {
     return apiRequest('/api/wellbeing/vacation-nudge');
   },
 
+  async getWeeklyWellbeingStatus() {
+    return apiRequest('/api/wellbeing/weekly-status');
+  },
+
+  async sendVacationEmail() {
+    return apiRequest('/api/wellbeing/send-vacation-email', {
+      method: 'POST'
+    });
+  },
+
   async getAgentStatus() {
     return apiRequest('/api/agent/status');
   },

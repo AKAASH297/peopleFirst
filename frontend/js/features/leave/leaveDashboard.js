@@ -12,14 +12,19 @@ export const LeaveDashboard = {
       <div class="view-header">
         <div>
           <h2 class="view-title">Dashboard</h2>
-          <p class="view-subtitle">Overview of your leave quotas, active requests, and wellbeing.</p>
+          <p class="view-subtitle">Overview of your leave quotas, active requests, and weekly wellbeing status.</p>
         </div>
-        <div>
+        <div class="flex items-center gap-2">
+          <button id="viewWellnessBtn" class="btn btn-outline">
+            <span>✨</span> Wellness Concierge
+          </button>
           <button id="quickApplyBtn" class="btn btn-primary">
             <span>➕</span> Apply for Leave
           </button>
         </div>
       </div>
+
+      <div id="dashboardWellbeingContainer" style="margin-bottom: 1.5rem;"></div>
 
       <div id="vacationNudgeContainer"></div>
 
@@ -58,6 +63,46 @@ export const LeaveDashboard = {
   async attachEvents() {
     document.getElementById('quickApplyBtn')?.addEventListener('click', () => Router.navigate('applyLeave'));
     document.getElementById('viewAllHistoryBtn')?.addEventListener('click', () => Router.navigate('myLeaves'));
+    document.getElementById('viewWellnessBtn')?.addEventListener('click', () => Router.navigate('wellness'));
+
+    // 0. Fetch weekly wellbeing status
+    try {
+      const status = await agentApi.getWeeklyWellbeingStatus();
+      const wbContainer = document.getElementById('dashboardWellbeingContainer');
+      if (status && wbContainer) {
+        let badgeHtml = '<span class="badge badge-approved" style="font-size:0.75rem;">🟢 Healthy & Balanced</span>';
+        let borderColor = 'var(--primary)';
+        if (status.status === 'RECHARGE_RECOMMENDED') {
+          badgeHtml = '<span class="badge" style="background:#fef3c7; color:#92400e; font-size:0.75rem;">🟡 Recharge Recommended</span>';
+          borderColor = '#f59e0b';
+        } else if (status.status === 'ACTION_REQUIRED') {
+          badgeHtml = '<span class="badge" style="background:#e0f2fe; color:#0369a1; font-size:0.75rem;">🔵 Health Action Follow-up</span>';
+          borderColor = '#0284c7';
+        }
+
+        wbContainer.innerHTML = `
+          <div class="card" style="padding: 1rem 1.25rem; border-left: 4px solid ${borderColor}; background: #fff; margin:0;">
+            <div class="flex justify-between items-center" style="margin-bottom: 0.5rem;">
+              <div class="flex items-center gap-2">
+                <span style="font-size: 1.25rem;">📊</span>
+                <span style="font-weight: 600; font-size: 0.875rem;">Weekly Wellbeing Status</span>
+              </div>
+              <div>${badgeHtml}</div>
+            </div>
+            <div style="font-size: 0.8125rem; color: var(--text-sub); line-height: 1.4;">
+              ${status.summary}
+            </div>
+            ${status.recentSickLeave && status.opdClaimReminder ? `
+              <div style="margin-top: 0.5rem; font-size: 0.75rem; color: #0284c7; background: #f0f9ff; padding: 4px 8px; border-radius: 4px;">
+                🩺 <strong>Reimbursement:</strong> Remember to submit OPD/hospitalization bills within 90 days.
+              </div>
+            ` : ''}
+          </div>
+        `;
+      }
+    } catch (e) {
+      console.warn('Dashboard wellbeing status load error:', e);
+    }
 
     // 1. Fetch balances
     try {

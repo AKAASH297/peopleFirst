@@ -115,17 +115,17 @@ class PolicyValidatorTest {
     @Test
     @DisplayName("Criterion 5: Paid Leave rejected if start date isn't more than 2 days out (applied on + 2 < startDate)")
     void testPaidLeaveNoticePeriod() {
-        LocalDate appliedDate = LocalDate.of(2026, 9, 10);
+        LocalDate appliedDate = LocalDate.of(2026, 9, 7); // Monday
 
-        // Start date = appliedDate + 1 day -> rejected
+        // Start date = appliedDate + 1 day (Tuesday) -> rejected
         assertThrows(PolicyViolationException.class, () ->
                 policyValidator.validateLeaveApplication(employee, LeaveType.PAID, null, appliedDate.plusDays(1), appliedDate.plusDays(2), 2.0, false, null, appliedDate));
 
-        // Start date = appliedDate + 2 days -> rejected (must be MORE than 2 days)
+        // Start date = appliedDate + 2 days (Wednesday) -> rejected (must be MORE than 2 days)
         assertThrows(PolicyViolationException.class, () ->
                 policyValidator.validateLeaveApplication(employee, LeaveType.PAID, null, appliedDate.plusDays(2), appliedDate.plusDays(3), 2.0, false, null, appliedDate));
 
-        // Start date = appliedDate + 3 days -> valid (> 2 days)
+        // Start date = appliedDate + 3 days (Thursday to Friday) -> valid (> 2 days)
         assertDoesNotThrow(() ->
                 policyValidator.validateLeaveApplication(employee, LeaveType.PAID, null, appliedDate.plusDays(3), appliedDate.plusDays(4), 2.0, false, null, appliedDate));
     }
@@ -134,7 +134,7 @@ class PolicyValidatorTest {
     @DisplayName("Criterion 6: Casual/WFH rejected after end-of-week cutoff for past weeks")
     void testCasualWfhPastWeekCutoff() {
         LocalDate appliedDate = LocalDate.of(2026, 9, 14); // Monday
-        LocalDate pastWeekDate = LocalDate.of(2026, 9, 6); // Previous Sunday
+        LocalDate pastWeekDate = LocalDate.of(2026, 9, 4); // Previous Friday
 
         assertThrows(PolicyViolationException.class, () ->
                 policyValidator.validateLeaveApplication(employee, LeaveType.CASUAL, null, pastWeekDate, pastWeekDate, 1.0, false, null, appliedDate));
@@ -143,8 +143,8 @@ class PolicyValidatorTest {
     @Test
     @DisplayName("Criterion 7: Sick/Paid/LOP rejected after 25th of month for current month")
     void testSickPaidLopCutoffAfter25th() {
-        LocalDate appliedDate = LocalDate.of(2026, 9, 26); // After 25th
-        LocalDate currentMonthDate = LocalDate.of(2026, 9, 28);
+        LocalDate appliedDate = LocalDate.of(2026, 9, 26);
+        LocalDate currentMonthDate = LocalDate.of(2026, 9, 28); // Monday
 
         assertThrows(PolicyViolationException.class, () ->
                 policyValidator.validateLeaveApplication(employee, LeaveType.SICK, null, currentMonthDate, currentMonthDate, 1.0, false, null, appliedDate));
@@ -159,5 +159,39 @@ class PolicyValidatorTest {
         PolicyViolationException ex = assertThrows(PolicyViolationException.class, () ->
                 policyValidator.validateLeaveApplication(employee, LeaveType.CASUAL, null, backdate, backdate, 1.0, false, null, appliedDate));
         assertEquals("You can't apply leave for backdate.", ex.getMessage());
+    }
+
+    @Test
+    @DisplayName("Requirement: Apply before actual leave date — applying for today is rejected")
+    void testApplyingOnSameDateRejectedAsBeforeActualLeaveDate() {
+        LocalDate appliedDate = LocalDate.of(2026, 9, 10);
+        LocalDate todayDate = LocalDate.of(2026, 9, 10);
+
+        PolicyViolationException ex = assertThrows(PolicyViolationException.class, () ->
+                policyValidator.validateLeaveApplication(employee, LeaveType.LOP, null, todayDate, todayDate, 1.0, false, null, appliedDate));
+        assertEquals("You can't apply leave for backdate.", ex.getMessage());
+    }
+
+    @Test
+    @DisplayName("Weekend Restriction: Leaves cannot be applied on Saturday or Sunday")
+    void testWeekendLeaveBlocked() {
+        LocalDate saturday = LocalDate.of(2026, 9, 12);
+        LocalDate sunday = LocalDate.of(2026, 9, 13);
+        LocalDate monday = LocalDate.of(2026, 9, 14);
+
+        // Single day on Saturday -> rejected
+        PolicyViolationException ex1 = assertThrows(PolicyViolationException.class, () ->
+                policyValidator.validateLeaveApplication(employee, LeaveType.SICK, null, saturday, saturday, 1.0, false, null, LocalDate.of(2026, 9, 7)));
+        assertTrue(ex1.getMessage().contains("Leaves cannot be applied on weekends"));
+
+        // Single day on Sunday -> rejected
+        PolicyViolationException ex2 = assertThrows(PolicyViolationException.class, () ->
+                policyValidator.validateLeaveApplication(employee, LeaveType.CASUAL, null, sunday, sunday, 1.0, false, null, LocalDate.of(2026, 9, 7)));
+        assertTrue(ex2.getMessage().contains("Leaves cannot be applied on weekends"));
+
+        // Starting on Sunday ending on Monday -> rejected
+        PolicyViolationException ex3 = assertThrows(PolicyViolationException.class, () ->
+                policyValidator.validateLeaveApplication(employee, LeaveType.PAID, null, sunday, monday, 2.0, false, null, LocalDate.of(2026, 9, 7)));
+        assertTrue(ex3.getMessage().contains("Leaves cannot be applied on weekends"));
     }
 }

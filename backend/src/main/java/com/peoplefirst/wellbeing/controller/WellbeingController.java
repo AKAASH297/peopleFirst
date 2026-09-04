@@ -3,10 +3,13 @@ package com.peoplefirst.wellbeing.controller;
 import com.peoplefirst.auth.security.CurrentUserProvider;
 import com.peoplefirst.leave.entity.LeaveRequest;
 import com.peoplefirst.leave.repository.LeaveRequestRepository;
+import com.peoplefirst.leave.service.LeaveService;
 import com.peoplefirst.user.entity.User;
 import com.peoplefirst.wellbeing.dto.AmenityDto;
 import com.peoplefirst.wellbeing.dto.HospitalPartnerDto;
 import com.peoplefirst.wellbeing.dto.ResortPartnerDto;
+import com.peoplefirst.wellbeing.dto.VacationEmailDto;
+import com.peoplefirst.wellbeing.dto.WeeklyWellbeingDto;
 import com.peoplefirst.wellbeing.dto.WellbeingSuggestionDto;
 import com.peoplefirst.wellbeing.service.WellbeingService;
 import org.springframework.http.ResponseEntity;
@@ -22,13 +25,16 @@ public class WellbeingController {
     private final WellbeingService wellbeingService;
     private final CurrentUserProvider currentUserProvider;
     private final LeaveRequestRepository leaveRequestRepository;
+    private final LeaveService leaveService;
 
     public WellbeingController(WellbeingService wellbeingService,
                                CurrentUserProvider currentUserProvider,
-                               LeaveRequestRepository leaveRequestRepository) {
+                               LeaveRequestRepository leaveRequestRepository,
+                               LeaveService leaveService) {
         this.wellbeingService = wellbeingService;
         this.currentUserProvider = currentUserProvider;
         this.leaveRequestRepository = leaveRequestRepository;
+        this.leaveService = leaveService;
     }
 
     @GetMapping("/amenities")
@@ -57,5 +63,20 @@ public class WellbeingController {
 
         WellbeingSuggestionDto nudge = wellbeingService.checkVacationNudge(currentUser, hasTakenLeave);
         return ResponseEntity.ok(nudge);
+    }
+
+    @PostMapping("/send-vacation-email")
+    public ResponseEntity<VacationEmailDto> sendVacationEmail() {
+        User currentUser = currentUserProvider.getCurrentUser();
+        VacationEmailDto emailDto = wellbeingService.sendVacationNudgeEmail(currentUser);
+        return ResponseEntity.ok(emailDto);
+    }
+
+    @GetMapping("/weekly-status")
+    public ResponseEntity<WeeklyWellbeingDto> getWeeklyStatus() {
+        User currentUser = currentUserProvider.getCurrentUser();
+        List<LeaveRequest> userLeaves = leaveService.getLeaveEntitiesForUser(currentUser.getId());
+        WeeklyWellbeingDto status = wellbeingService.getWeeklyWellbeingReport(currentUser, userLeaves);
+        return ResponseEntity.ok(status);
     }
 }

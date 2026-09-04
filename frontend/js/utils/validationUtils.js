@@ -20,8 +20,13 @@ export const ValidationUtils = {
       }
     }
 
-    if (startDate && DateUtils.isBeforeToday(startDate)) {
-      errors.push('Leave cannot be applied retroactively for dates that have already passed. Please raise a Support Ticket instead.');
+    if (startDate) {
+      const dStart = DateUtils.parseLocalDate(startDate);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      if (dStart && dStart <= today) {
+        errors.push("Leaves must be applied before the actual leave date. You can't apply leave for today or backdate.");
+      }
     }
 
     // Contractor checks
@@ -55,6 +60,11 @@ export const ValidationUtils = {
       if (chosenStart && chosenStart <= minNoticeDate) {
         errors.push('Paid Leave requires more than 2 days advance notice (start date must be at least 3 days from today).');
       }
+    }
+
+    // Weekend check
+    if (DateUtils.isWeekend(startDate) || DateUtils.isWeekend(endDate) || totalDays === 0) {
+      errors.push('Leaves cannot be applied on weekends (Saturday or Sunday). Please select working days (Monday to Friday).');
     }
 
     return {
