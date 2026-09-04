@@ -13,7 +13,7 @@ public class AgentToolCatalog {
                                 "description", "Leave type to check, e.g. Sick, Paid, or LOP. Omit to return all balances.")),
                         List.of()),
                 schema(AgentTool.APPLY_LEAVE,
-                        "Apply for leave. Contractors: Sick/Paid/LOP only. Paid needs 3+ days notice. Sick > 2 days needs a certificate. Never invent balances; call check_balance first when unsure.",
+                        "Apply for leave. Contractors: Sick/Paid/LOP only. Paid needs 3+ days notice. Sick > 2 days needs a certificate. Volunteering applicants can join CSR chapters after applying. Never invent balances; call check_balance first when unsure.",
                         Map.of(
                                 "leaveType", Map.of("type", "string",
                                         "description", "Leave type, e.g. Sick, Paid, or LOP."),

@@ -21,6 +21,7 @@ import com.peoplefirst.policy.entity.LeaveType;
 import com.peoplefirst.policy.service.PolicyService;
 import com.peoplefirst.user.entity.Role;
 import com.peoplefirst.user.entity.User;
+import com.peoplefirst.volunteering.service.VolunteeringService;
 import com.peoplefirst.wellbeing.service.WellbeingService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -46,6 +47,7 @@ class AgentServiceAgenticTest {
     private LeaveMapper leaveMapper;
     private ApprovalService approvalService;
     private WellbeingService wellbeingService;
+    private VolunteeringService volunteeringService;
     private AgentService agentService;
     private User employee;
 
@@ -60,9 +62,10 @@ class AgentServiceAgenticTest {
         leaveMapper = Mockito.mock(LeaveMapper.class);
         genAiClient = Mockito.mock(GenAiClient.class);
         approvalService = Mockito.mock(ApprovalService.class);
+        volunteeringService = Mockito.mock(VolunteeringService.class);
 
         agentService = new AgentService(intentParser, currentUserProvider, leaveService,
-                leaveBalanceService, policyService, wellbeingService, leaveMapper, genAiClient, approvalService);
+                leaveBalanceService, policyService, wellbeingService, leaveMapper, genAiClient, approvalService, volunteeringService);
 
         employee = new User("emp1", "emp1@test.com", "encodedPass", "Test Employee",
                 Role.EMPLOYEE, false, "Eng", "Bangalore", UUID.randomUUID());
@@ -440,5 +443,51 @@ class AgentServiceAgenticTest {
         assertTrue(response.isActionExecuted());
         assertTrue(response.getReply().contains("Floor 6"));
         assertTrue(response.getReply().contains("Room 7"));
+    }
+
+    private LeaveResponseDto volunteeringCreatedDto(UUID leaveId) {
+        LeaveResponseDto created = Mockito.mock(LeaveResponseDto.class);
+        when(created.getId()).thenReturn(leaveId);
+        when(created.getLeaveTypeDisplayName()).thenReturn("Volunteering Leave");
+        when(created.getStartDate()).thenReturn(LocalDate.now().plusDays(3));
+        when(created.getEndDate()).thenReturn(LocalDate.now().plusDays(3));
+        when(created.getTotalDays()).thenReturn(1.0);
+        return created;
+    }
+
+    @Test
+    void volunteeringApplyOffersCsrGroups() {
+        when(genAiClient.isConfigured()).thenReturn(false);
+        UUID leaveId = UUID.randomUUID();
+        LeaveResponseDto created = volunteeringCreatedDto(leaveId);
+        when(leaveService.applyLeave(any(), eq(employee))).thenReturn(created);
+        when(wellbeingService.evaluateLeaveWellbeing(any(), eq(employee))).thenReturn(List.of());
+
+        AgentChatResponseDto response = agentService.processMessage(
+                new AgentChatRequestDto("apply volunteering leave tomorrow", "conv-vol-a"));
+
+        assertTrue(response.isActionExecuted());
+        assertTrue(response.getReply().contains("Paws & Care Animal Rescue"));
+        assertTrue(response.getReply().toLowerCase().contains("enroll you"));
+        assertTrue(response.getReply().toLowerCase().contains("intranet banner"));
+    }
+
+    @Test
+    void volunteeringSignupEnrollsNamedGroupWithBanner() {
+        when(genAiClient.isConfigured()).thenReturn(false);
+        UUID leaveId = UUID.randomUUID();
+        LeaveResponseDto created = volunteeringCreatedDto(leaveId);
+        when(leaveService.applyLeave(any(), eq(employee))).thenReturn(created);
+        when(wellbeingService.evaluateLeaveWellbeing(any(), eq(employee))).thenReturn(List.of());
+
+        agentService.processMessage(
+                new AgentChatRequestDto("apply volunteering leave tomorrow", "conv-vol-b"));
+        AgentChatResponseDto enrolled = agentService.processMessage(
+                new AgentChatRequestDto("Paws & Care Animal Rescue and feature me", "conv-vol-b"));
+
+        Mockito.verify(volunteeringService, Mockito.times(1))
+                .enroll(eq(employee.getId()), eq("Paws & Care Animal Rescue"), eq(leaveId), eq(true));
+        assertTrue(enrolled.getReply().contains("Paws & Care Animal Rescue"));
+        assertTrue(enrolled.getReply().toLowerCase().contains("intranet banner"));
     }
 }

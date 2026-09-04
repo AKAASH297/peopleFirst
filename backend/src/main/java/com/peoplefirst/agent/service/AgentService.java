@@ -28,6 +28,7 @@ import com.peoplefirst.agent.tools.AgentToolCatalog;
 import com.peoplefirst.approval.dto.ApprovalActionDto;
 import com.peoplefirst.approval.service.ApprovalService;
 import com.peoplefirst.user.entity.Role;
+import com.peoplefirst.volunteering.service.VolunteeringService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.security.access.AccessDeniedException;
@@ -63,6 +64,7 @@ public class AgentService {
     private final LeaveMapper leaveMapper;
     private final GenAiClient genAiClient;
     private final ApprovalService approvalService;
+    private final VolunteeringService volunteeringService;
 
     // Multi-turn conversational leave draft store keyed by User UUID
     private final Map<UUID, PendingLeaveDraft> userDrafts = new ConcurrentHashMap<>();
@@ -70,6 +72,17 @@ public class AgentService {
     // Agentic loop state: per-conversation message history and pending write confirmations
     private final Map<String, List<Map<String, String>>> conversations = new ConcurrentHashMap<>();
     private final Map<UUID, PendingAgentAction> pendingActions = new ConcurrentHashMap<>();
+
+    // Post-apply volunteering CSR signup state keyed by User UUID
+    private final Map<UUID, PendingVolunteeringSignup> volunteeringSignups = new ConcurrentHashMap<>();
+
+    // Exact CSR chapter names from VolunteeringWellbeingRule (groupSuggestions)
+    private static final List<String> CSR_GROUPS = List.of(
+            "Green Earth Afforestation Drive",
+            "Code & Tech Literacy for Underprivileged Youth",
+            "Community Food Bank & Kitchen Support",
+            "Paws & Care Animal Rescue");
+    private static final String CSR_ENROLL_URL = "https://csr.peoplefirst.internal/enroll";
 
     public static final int MAX_MESSAGE_LENGTH = 2000;
 
@@ -84,7 +97,8 @@ public class AgentService {
                         WellbeingService wellbeingService,
                         LeaveMapper leaveMapper,
                         GenAiClient genAiClient,
-                        ApprovalService approvalService) {
+                        ApprovalService approvalService,
+                        VolunteeringService volunteeringService) {
         this.intentParser = intentParser;
         this.currentUserProvider = currentUserProvider;
         this.leaveService = leaveService;
@@ -94,6 +108,7 @@ public class AgentService {
         this.leaveMapper = leaveMapper;
         this.genAiClient = genAiClient;
         this.approvalService = approvalService;
+        this.volunteeringService = volunteeringService;
     }
 
     public AgentChatResponseDto processMessage(AgentChatRequestDto request) {
@@ -150,6 +165,19 @@ public class AgentService {
 
         if (draft != null && !isExplicitOtherIntent) {
             return continueLeaveDraft(message, draft, user);
+        }
+
+        PendingVolunteeringSignup signup = volunteeringSignups.get(user.getId());
+        if (signup != null && signup.isExpired()) {
+            volunteeringSignups.remove(user.getId());
+            signup = null;
+        }
+        if (signup != null) {
+            if (isExplicitOtherIntent) {
+                volunteeringSignups.remove(user.getId());
+            } else {
+                return continueVolunteeringSignup(message, signup, user);
+            }
         }
 
         switch (intent) {
@@ -690,7 +718,7 @@ public class AgentService {
     private AgentChatResponseDto promptForLeaveType(User user) {
         String roleNote = user.isContractor()
                 ? "As a contractor partner, you are eligible for **Sick Leave**, **Paid Leave**, or **Loss of Pay (LOP)**."
-                : "You can apply for **Casual Leave**, **Sick Leave**, **Paid Leave**, **Work From Home (WFH)**, or **Loss of Pay (LOP)**.";
+                : "You can apply for **Casual Leave**, **Sick Leave**, **Paid Leave**, **Work From Home (WFH)**, **Loss of Pay (LOP)**, or **Volunteering Leave**.";
 
         String reply = "I would be glad to help you submit a leave request!\n\n" + roleNote + "\n\nWhich type of leave would you like to apply for?";
         AgentChatResponseDto response = new AgentChatResponseDto(reply, AgentIntent.APPLY_LEAVE.name());
@@ -702,7 +730,7 @@ public class AgentService {
         if (user.isContractor()) {
             return List.of("Sick Leave", "Paid Leave", "Loss of Pay (LOP)", "Cancel");
         } else {
-            return List.of("Casual Leave", "Sick Leave", "Paid Leave", "Work From Home (WFH)", "Loss of Pay (LOP)", "Cancel");
+            return List.of("Casual Leave", "Sick Leave", "Paid Leave", "Work From Home (WFH)", "Loss of Pay (LOP)", "Volunteering Leave", "Cancel");
         }
     }
 
@@ -806,6 +834,13 @@ public class AgentService {
                 sb.append("\n\n🛏️ If you're unwell and nearby, you can rest in the office sick room (**Floor 6, Room 7**) before heading home — just let reception know.");
             }
 
+            if (leaveType == LeaveType.VOLUNTEERING && created.getId() != null) {
+                volunteeringSignups.put(user.getId(), new PendingVolunteeringSignup(created.getId()));
+                sb.append("\n\n🌱 **CSR chapters you can join:** ")
+                        .append(String.join(", ", CSR_GROUPS))
+                        .append(".\nWant me to enroll you in one — and feature you on the company intranet banner? Reply with the group name (add \"and feature me\" for the banner).");
+            }
+
             AgentChatResponseDto response = new AgentChatResponseDto(sb.toString(), AgentIntent.APPLY_LEAVE.name());
             response.setActionExecuted(true);
             response.setActionName("APPLY_LEAVE");
@@ -818,7 +853,9 @@ public class AgentService {
                 response.setWellbeingSuggestions(wellbeingSuggestions);
             } catch (Exception ignored) {}
 
-            response.setQuickReplies(getPostActionQuickReplies(user));
+            response.setQuickReplies(leaveType == LeaveType.VOLUNTEERING
+                    ? csrQuickReplies()
+                    : getPostActionQuickReplies(user));
             return response;
 
         } catch (PolicyViolationException pve) {
@@ -968,6 +1005,60 @@ public class AgentService {
         response.setActionData(result);
         response.setQuickReplies(getPostActionQuickReplies(user));
         return response;
+    }
+
+    private AgentChatResponseDto continueVolunteeringSignup(String message, PendingVolunteeringSignup signup, User user) {
+        String lower = message.toLowerCase().trim();
+        if (lower.equals("no thanks") || lower.equals("no") || lower.equals("cancel") ||
+                lower.equals("stop") || lower.equals("discard") || lower.equals("never mind") ||
+                lower.equals("nevermind")) {
+            volunteeringSignups.remove(user.getId());
+            AgentChatResponseDto declined = new AgentChatResponseDto(
+                    "No problem — enjoy your volunteering leave!", AgentIntent.APPLY_LEAVE.name());
+            declined.setQuickReplies(getPostActionQuickReplies(user));
+            return declined;
+        }
+
+        String matched = matchCsrGroup(message);
+        if (matched != null) {
+            boolean banner = lower.contains("feature");
+            volunteeringService.enroll(user.getId(), matched, signup.getLeaveRequestId(), banner);
+            volunteeringSignups.remove(user.getId());
+            String reply = banner
+                    ? "You're enrolled in **" + matched + "**! You'll be featured on the intranet banner. Reach out to CSR at " + CSR_ENROLL_URL + " for onboarding."
+                    : "You're enrolled in **" + matched + "**!";
+            AgentChatResponseDto enrolled = new AgentChatResponseDto(reply, AgentIntent.APPLY_LEAVE.name());
+            enrolled.setActionExecuted(true);
+            enrolled.setActionName("VOLUNTEER_ENROLL");
+            enrolled.setQuickReplies(getPostActionQuickReplies(user));
+            return enrolled;
+        }
+
+        volunteeringSignups.put(user.getId(), signup);
+        AgentChatResponseDto reprompt = new AgentChatResponseDto(
+                "Which CSR chapter would you like to join? Reply with the group name (add \"and feature me\" for the intranet banner).",
+                AgentIntent.APPLY_LEAVE.name());
+        reprompt.setQuickReplies(csrQuickReplies());
+        return reprompt;
+    }
+
+    private String matchCsrGroup(String message) {
+        if (message == null) {
+            return null;
+        }
+        String lower = message.toLowerCase();
+        for (String group : CSR_GROUPS) {
+            if (lower.contains(group.toLowerCase())) {
+                return group;
+            }
+        }
+        return null;
+    }
+
+    private List<String> csrQuickReplies() {
+        List<String> replies = new ArrayList<>(CSR_GROUPS);
+        replies.add("No thanks");
+        return replies;
     }
 
     private AgentChatResponseDto handleCancelLeave(String message, User user) {
@@ -1242,5 +1333,20 @@ public class AgentService {
 
         String getToolName() { return toolName; }
         String getArgumentsJson() { return argumentsJson; }
+    }
+
+    private static class PendingVolunteeringSignup {
+        private final UUID leaveRequestId;
+        private final long createdAt = System.currentTimeMillis();
+
+        PendingVolunteeringSignup(UUID leaveRequestId) {
+            this.leaveRequestId = leaveRequestId;
+        }
+
+        boolean isExpired() {
+            return (System.currentTimeMillis() - createdAt) > (15 * 60 * 1000L); // 15 mins expiry
+        }
+
+        UUID getLeaveRequestId() { return leaveRequestId; }
     }
 }
