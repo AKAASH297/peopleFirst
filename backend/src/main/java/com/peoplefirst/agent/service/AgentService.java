@@ -38,9 +38,11 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
@@ -63,6 +65,9 @@ public class AgentService {
     // Agentic loop state: per-conversation message history and pending write confirmations
     private final Map<String, List<Map<String, String>>> conversations = new ConcurrentHashMap<>();
     private final Map<UUID, PendingAgentAction> pendingActions = new ConcurrentHashMap<>();
+
+    private static final Set<String> CONFIRM_WORDS = Set.of("yes", "confirm", "proceed");
+    private static final Set<String> DISCARD_WORDS = Set.of("no", "cancel", "discard", "abort", "stop");
 
     public AgentService(IntentParser intentParser,
                         CurrentUserProvider currentUserProvider,
@@ -168,16 +173,14 @@ public class AgentService {
             pending = null;
         }
         if (pending != null) {
-            if (lower.equals("yes") || lower.equals("confirm") || lower.equals("proceed")
-                    || lower.startsWith("yes") || lower.contains("confirm") || lower.contains("proceed")) {
+            if (isConfirmReply(lower)) {
                 pendingActions.remove(user.getId());
                 if (AgentTool.APPLY_LEAVE.getName().equals(pending.getToolName())) {
                     return executeLeaveApplication(buildDraftFromArguments(pending.getArgumentsJson(), message), user);
                 }
                 return handleCancelLeave(message, user);
             }
-            if (lower.equals("no") || lower.equals("cancel") || lower.equals("discard")
-                    || lower.startsWith("no") || lower.contains("cancel") || lower.contains("discard")) {
+            if (isDiscardReply(lower)) {
                 pendingActions.remove(user.getId());
                 AgentChatResponseDto cancelled = new AgentChatResponseDto(
                         "Understood \u2014 I've discarded the pending action. Let me know if you need anything else!",
@@ -188,8 +191,18 @@ public class AgentService {
         }
 
         String convKey = (conversationId != null && !conversationId.isBlank()) ? conversationId : "default";
+        String historyKey = user.getId().toString() + ":" + convKey;
         List<Map<String, String>> history =
-                conversations.computeIfAbsent(convKey, k -> new ArrayList<>());
+                conversations.computeIfAbsent(historyKey, k -> new ArrayList<>());
+        // Bound total keys: conversation IDs are client-controlled and could grow the map without limit.
+        // ConcurrentHashMap has no insertion order, so evict an arbitrary entry when over budget.
+        while (conversations.size() > 500) {
+            Iterator<String> eldest = conversations.keySet().iterator();
+            if (!eldest.hasNext()) {
+                break;
+            }
+            conversations.remove(eldest.next());
+        }
         appendToHistory(history, Map.of("role", "user", "content", message));
 
         ObjectMapper mapper = new ObjectMapper();
@@ -313,6 +326,22 @@ public class AgentService {
             return lastToolResponse;
         }
         return processRuleBased(new AgentChatRequestDto(message, conversationId), message, user);
+    }
+
+    private boolean isConfirmReply(String lower) {
+        return CONFIRM_WORDS.contains(lower) || CONFIRM_WORDS.contains(firstToken(lower));
+    }
+
+    private boolean isDiscardReply(String lower) {
+        if (lower.equals("never mind") || lower.equals("nevermind")) {
+            return true;
+        }
+        return DISCARD_WORDS.contains(lower) || DISCARD_WORDS.contains(firstToken(lower));
+    }
+
+    private String firstToken(String lower) {
+        String[] tokens = lower.split("[\\s\\p{Punct}]+");
+        return tokens.length > 0 ? tokens[0] : "";
     }
 
     private void appendToHistory(List<Map<String, String>> history, Map<String, String> entry) {
