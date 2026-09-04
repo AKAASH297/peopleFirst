@@ -43,6 +43,15 @@ public class GenAiClient {
     @Value("${app.genai.endpoint:https://generativelanguage.googleapis.com/v1beta/models}")
     private String geminiEndpoint;
 
+    @Value("${app.genai.base-url:${OPENAI_BASE_URL:https://api.openai.com/v1}}")
+    private String openAiBaseUrl;
+
+    @Value("${app.genai.provider:${GENAI_PROVIDER:auto}}")
+    private String provider;
+
+    public record IntentSlots(String intent, Map<String, String> slots) {
+    }
+
     public GenAiClient(ObjectMapper objectMapper) {
         this.objectMapper = objectMapper;
         this.httpClient = HttpClient.newBuilder()
@@ -58,12 +67,32 @@ public class GenAiClient {
         return model;
     }
 
+    public String getBaseUrl() {
+        return openAiBaseUrl();
+    }
+
+    public String getProvider() {
+        return provider;
+    }
+
     public void setModel(String model) {
         this.model = model;
     }
 
     public void setApiKey(String key) {
         this.apiKey = key;
+    }
+
+    public void setBaseUrl(String baseUrl) {
+        this.openAiBaseUrl = baseUrl;
+    }
+
+    public void setProvider(String provider) {
+        this.provider = provider;
+    }
+
+    public void setEnabled(boolean enabled) {
+        this.enabled = enabled;
     }
 
     /**
@@ -76,6 +105,15 @@ public class GenAiClient {
 
         String key = apiKey.trim();
         String currentModel = (model != null && !model.trim().isEmpty()) ? model.trim() : "gemini-1.5-pro";
+        String providerName = (provider != null) ? provider.trim() : "auto";
+
+        // Explicit provider routing; auto keeps the historical key/model sniffing.
+        if ("openai_compatible".equalsIgnoreCase(providerName)) {
+            String openAiModel = currentModel.contains("gemini") ? "gpt-3.5-turbo" : currentModel;
+            return callOpenAiApi(key, openAiModel, systemInstruction, userMessage);
+        } else if ("gemini".equalsIgnoreCase(providerName)) {
+            return callGeminiApi(key, currentModel, systemInstruction, userMessage);
+        }
 
         // Route to OpenAI if key starts with sk- or model references gpt / 3.5
         if (key.startsWith("sk-") || currentModel.toLowerCase().contains("gpt") || currentModel.contains("3.5")) {
@@ -149,7 +187,7 @@ public class GenAiClient {
 
     private Optional<String> callOpenAiApi(String key, String targetModel, String systemInstruction, String userMessage) {
         try {
-            String url = "https://api.openai.com/v1/chat/completions";
+            String url = openAiBaseUrl().replaceAll("/+$", "") + "/chat/completions";
 
             List<Map<String, String>> messages = new ArrayList<>();
             if (systemInstruction != null && !systemInstruction.trim().isEmpty()) {
@@ -192,6 +230,160 @@ public class GenAiClient {
 
             log.warn("Unexpected OpenAI API response: {}", response.body());
             return Optional.empty();
+
+        } catch (Exception e) {
+            log.warn("OpenAI API call error (fallback to policy engine): {}", e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * Chat via the OpenAI-compatible endpoint with tool definitions, returning the raw
+     * assistant message JSON ({@code {"content": "...", "tool_calls": [...]}}) as a String.
+     */
+    public Optional<String> chatWithTools(String systemInstruction, List<Map<String, String>> history, List<Map<String, Object>> tools) {
+        if (!isConfigured()) {
+            return Optional.empty();
+        }
+
+        try {
+            String currentModel = (model != null && !model.trim().isEmpty()) ? model.trim() : "gpt-3.5-turbo";
+            String openAiModel = currentModel.contains("gemini") ? "gpt-3.5-turbo" : currentModel;
+
+            List<Map<String, String>> messages = new ArrayList<>();
+            if (systemInstruction != null && !systemInstruction.trim().isEmpty()) {
+                messages.add(Map.of("role", "system", "content", systemInstruction));
+            }
+            if (history != null) {
+                messages.addAll(history);
+            }
+
+            Map<String, Object> requestBody = new HashMap<>();
+            requestBody.put("model", openAiModel);
+            requestBody.put("messages", messages);
+            requestBody.put("temperature", 0.4);
+            requestBody.put("max_tokens", 1000);
+            requestBody.put("tools", tools);
+            requestBody.put("tool_choice", "auto");
+
+            Optional<JsonNode> root = postOpenAiChat(requestBody, openAiModel);
+            if (root.isEmpty()) {
+                return Optional.empty();
+            }
+
+            JsonNode choices = root.get().path("choices");
+            if (choices.isArray() && choices.size() > 0) {
+                JsonNode message = choices.get(0).path("message");
+                if (!message.isMissingNode()) {
+                    return Optional.of(objectMapper.writeValueAsString(message));
+                }
+            }
+
+            log.warn("Unexpected OpenAI API response: {}", root.get());
+            return Optional.empty();
+
+        } catch (Exception e) {
+            log.warn("OpenAI API call error (fallback to policy engine): {}", e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    /**
+     * JSON-degrade path: asks the OpenAI-compatible endpoint for a strict JSON object
+     * and parses it into {@link IntentSlots}. Empty on any failure.
+     */
+    public Optional<IntentSlots> parseIntentJson(String systemInstruction, String userMessage) {
+        if (!isConfigured()) {
+            return Optional.empty();
+        }
+
+        try {
+            String currentModel = (model != null && !model.trim().isEmpty()) ? model.trim() : "gpt-3.5-turbo";
+            String openAiModel = currentModel.contains("gemini") ? "gpt-3.5-turbo" : currentModel;
+
+            String shape = "Respond with exactly this JSON object and nothing else: "
+                    + "{\"intent\": \"<ONE_OF_10>\", \"slots\": "
+                    + "{\"leaveType\": \"\", \"startDate\": \"\", \"endDate\": \"\", \"confirmed\": \"\"}}";
+            String effectiveSystem = (systemInstruction != null && !systemInstruction.trim().isEmpty())
+                    ? systemInstruction.trim() + "\n" + shape
+                    : shape;
+
+            List<Map<String, String>> messages = new ArrayList<>();
+            messages.add(Map.of("role", "system", "content", effectiveSystem));
+            messages.add(Map.of("role", "user", "content", userMessage));
+
+            Map<String, Object> requestBody = new HashMap<>();
+            requestBody.put("model", openAiModel);
+            requestBody.put("messages", messages);
+            requestBody.put("temperature", 0.4);
+            requestBody.put("max_tokens", 1000);
+            requestBody.put("response_format", Map.of("type", "json_object"));
+
+            Optional<JsonNode> root = postOpenAiChat(requestBody, openAiModel);
+            if (root.isEmpty()) {
+                return Optional.empty();
+            }
+
+            JsonNode choices = root.get().path("choices");
+            if (choices.isArray() && choices.size() > 0) {
+                String content = choices.get(0).path("message").path("content").asText();
+                if (content != null && !content.trim().isEmpty()) {
+                    JsonNode node = objectMapper.readTree(content.trim());
+                    String intent = node.path("intent").asText(null);
+                    if (intent != null && !intent.trim().isEmpty()) {
+                        Map<String, String> slots = new HashMap<>();
+                        JsonNode slotsNode = node.path("slots");
+                        if (slotsNode.isObject()) {
+                            slotsNode.fields().forEachRemaining(entry ->
+                                    slots.put(entry.getKey(),
+                                            entry.getValue().isNull() ? "" : entry.getValue().asText()));
+                        }
+                        return Optional.of(new IntentSlots(intent.trim(), slots));
+                    }
+                }
+            }
+
+            log.warn("Unexpected OpenAI API response: {}", root.get());
+            return Optional.empty();
+
+        } catch (Exception e) {
+            log.warn("OpenAI API call error (fallback to policy engine): {}", e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    private String openAiBaseUrl() {
+        String base = (openAiBaseUrl != null && !openAiBaseUrl.trim().isEmpty())
+                ? openAiBaseUrl.trim()
+                : "https://api.openai.com/v1";
+        base = base.replaceAll("/+$", "");
+        if (base.endsWith("/chat/completions")) {
+            base = base.substring(0, base.length() - "/chat/completions".length());
+        }
+        return base;
+    }
+
+    private Optional<JsonNode> postOpenAiChat(Map<String, Object> requestBody, String targetModel) {
+        try {
+            String url = openAiBaseUrl().replaceAll("/+$", "") + "/chat/completions";
+            String jsonPayload = objectMapper.writeValueAsString(requestBody);
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(url))
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", "Bearer " + apiKey.trim())
+                    .timeout(Duration.ofSeconds(12))
+                    .POST(HttpRequest.BodyPublishers.ofString(jsonPayload))
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+
+            if (response.statusCode() != 200) {
+                log.warn("OpenAI API ({}) returned HTTP {}: {}", targetModel, response.statusCode(), response.body());
+                return Optional.empty();
+            }
+
+            return Optional.of(objectMapper.readTree(response.body()));
 
         } catch (Exception e) {
             log.warn("OpenAI API call error (fallback to policy engine): {}", e.getMessage());

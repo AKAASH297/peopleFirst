@@ -21,8 +21,7 @@ export const ChatWidget = {
           <div class="flex items-center gap-2">
             <span style="font-size: 1.25rem;">✨</span>
             <div>
-              <div style="font-weight: 700; font-size: 0.9375rem;">Kura AI Concierge</div>
-              <div style="font-size: 0.6875rem; opacity: 0.9;">Google Gemini GenAI + Grounded Policies</div>
+              <div style="font-weight: 700; font-size: 0.9375rem;">Kura · Leave & Wellbeing Concierge</div>
             </div>
           </div>
           <button id="closeKuraChat" style="background:none; border:none; color:#fff; font-size:1.25rem; cursor:pointer;">&times;</button>
@@ -38,7 +37,7 @@ export const ChatWidget = {
           <button class="quick-reply-chip" data-msg="Campus amenities">Amenities</button>
         </div>
         <form id="kuraChatForm" class="chat-input-row">
-          <input id="kuraChatInput" type="text" class="chat-input" placeholder="Message Kura..." autocomplete="off" />
+          <input id="kuraChatInput" type="text" class="chat-input" placeholder="Message Kura..." autocomplete="off" maxlength="2000" />
           <button type="submit" class="btn btn-primary btn-sm">Send</button>
         </form>
       </div>
@@ -149,8 +148,59 @@ export const ChatWidget = {
 
   formatReply(text) {
     if (!text) return '';
-    return text
-      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-      .replace(/\n/g, '<br/>');
+    const lines = text.split('\n');
+    let html = '';
+    let i = 0;
+    while (i < lines.length) {
+      if (this.isTableStart(lines, i)) {
+        const rows = [];
+        let j = i;
+        while (j < lines.length && lines[j].startsWith('|')) {
+          rows.push(lines[j]);
+          j++;
+        }
+        html += this.renderTable(rows);
+        i = j;
+      } else {
+        html += this.formatInline(lines[i]);
+        if (i < lines.length - 1) html += '<br/>';
+        i++;
+      }
+    }
+    return html;
+  },
+
+  escapeHtml(s) {
+    return s
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  },
+
+  formatInline(line) {
+    return this.escapeHtml(line).replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+  },
+
+  isTableStart(lines, i) {
+    return i + 1 < lines.length
+      && lines[i].startsWith('|')
+      && lines[i + 1].startsWith('|')
+      && /^[\s|:\-]+$/.test(lines[i + 1]);
+  },
+
+  renderTable(rows) {
+    const cells = (row) => {
+      let t = row.trim();
+      if (t.startsWith('|')) t = t.slice(1);
+      if (t.endsWith('|')) t = t.slice(0, -1);
+      return t.split('|').map((c) => this.escapeHtml(c.trim()));
+    };
+    const header = cells(rows[0]).map((c) => `<th>${c}</th>`).join('');
+    const body = rows.slice(2)
+      .map((row) => `<tr>${cells(row).map((c) => `<td>${c}</td>`).join('')}</tr>`)
+      .join('');
+    return `<table class="kura-table"><thead><tr>${header}</tr></thead><tbody>${body}</tbody></table>`;
   }
 };
