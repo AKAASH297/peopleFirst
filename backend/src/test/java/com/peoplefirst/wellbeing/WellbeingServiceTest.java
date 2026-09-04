@@ -76,7 +76,8 @@ class WellbeingServiceTest {
         WellbeingSuggestionDto roomSug = suggestions.stream()
                 .filter(s -> s.getTrigger().equals("HALF_DAY_SICK_LEAVE_APPLIED"))
                 .findFirst().orElseThrow();
-        assertTrue(roomSug.getMessage().contains("Room 304"));
+        assertTrue(roomSug.getMessage().contains("Floor 6"));
+        assertTrue(roomSug.getMessage().contains("Room 7"));
     }
 
     @Test

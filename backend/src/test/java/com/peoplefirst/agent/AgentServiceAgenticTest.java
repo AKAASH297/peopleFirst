@@ -11,6 +11,7 @@ import com.peoplefirst.approval.service.ApprovalService;
 import com.peoplefirst.auth.security.CurrentUserProvider;
 import com.peoplefirst.leave.dto.LeaveBalanceDto;
 import com.peoplefirst.leave.dto.LeaveResponseDto;
+import com.peoplefirst.leave.dto.CreateLeaveRequestDto;
 import com.peoplefirst.leave.entity.LeaveBalance;
 import com.peoplefirst.leave.entity.LeaveStatus;
 import com.peoplefirst.leave.mapper.LeaveMapper;
@@ -44,6 +45,7 @@ class AgentServiceAgenticTest {
     private LeaveBalanceService leaveBalanceService;
     private LeaveMapper leaveMapper;
     private ApprovalService approvalService;
+    private WellbeingService wellbeingService;
     private AgentService agentService;
     private User employee;
 
@@ -54,7 +56,7 @@ class AgentServiceAgenticTest {
         leaveService = Mockito.mock(LeaveService.class);
         leaveBalanceService = Mockito.mock(LeaveBalanceService.class);
         PolicyService policyService = Mockito.mock(PolicyService.class);
-        WellbeingService wellbeingService = Mockito.mock(WellbeingService.class);
+        wellbeingService = Mockito.mock(WellbeingService.class);
         leaveMapper = Mockito.mock(LeaveMapper.class);
         genAiClient = Mockito.mock(GenAiClient.class);
         approvalService = Mockito.mock(ApprovalService.class);
@@ -362,5 +364,81 @@ class AgentServiceAgenticTest {
         Mockito.verify(approvalService, Mockito.times(1))
                 .approveLeave(eq(leaveId), any(ApprovalActionDto.class), eq(manager));
         assertTrue(confirmed.isActionExecuted());
+    }
+
+    private LeaveResponseDto halfDayCreatedDto() {
+        LeaveResponseDto created = Mockito.mock(LeaveResponseDto.class);
+        when(created.getId()).thenReturn(UUID.randomUUID());
+        when(created.getLeaveTypeDisplayName()).thenReturn("Sick Leave");
+        when(created.getStartDate()).thenReturn(LocalDate.now().plusDays(1));
+        when(created.getEndDate()).thenReturn(LocalDate.now().plusDays(1));
+        when(created.getTotalDays()).thenReturn(0.5);
+        return created;
+    }
+
+    @Test
+    void halfDaySessionIsAskedWhenMissing() {
+        when(genAiClient.isConfigured()).thenReturn(false);
+        LeaveResponseDto created = halfDayCreatedDto();
+        when(leaveService.applyLeave(any(), eq(employee))).thenReturn(created);
+
+        AgentChatResponseDto question = agentService.processMessage(
+                new AgentChatRequestDto("apply half day sick leave tomorrow", "conv-half-a"));
+
+        assertEquals("APPLY_LEAVE", question.getIntent());
+        assertTrue(question.getReply().contains("First half"));
+        assertFalse(question.isActionExecuted());
+
+        AgentChatResponseDto applied = agentService.processMessage(
+                new AgentChatRequestDto("First half (morning)", "conv-half-a"));
+        assertTrue(applied.isActionExecuted());
+    }
+
+    @Test
+    void morningMapsToFirstHalfAndApplies() {
+        when(genAiClient.isConfigured()).thenReturn(false);
+        LeaveResponseDto created = halfDayCreatedDto();
+        when(leaveService.applyLeave(any(), eq(employee))).thenReturn(created);
+
+        AgentChatResponseDto response = agentService.processMessage(
+                new AgentChatRequestDto("apply half day sick leave tomorrow morning", "conv-half-b"));
+
+        assertTrue(response.isActionExecuted());
+        ArgumentCaptor<CreateLeaveRequestDto> captor = ArgumentCaptor.forClass(CreateLeaveRequestDto.class);
+        Mockito.verify(leaveService).applyLeave(captor.capture(), eq(employee));
+        assertTrue(captor.getValue().isHalfDay());
+        assertEquals("FIRST_HALF", captor.getValue().getHalfDaySession());
+    }
+
+    @Test
+    void afternoonMapsToSecondHalf() {
+        when(genAiClient.isConfigured()).thenReturn(false);
+        LeaveResponseDto created = halfDayCreatedDto();
+        when(leaveService.applyLeave(any(), eq(employee))).thenReturn(created);
+
+        agentService.processMessage(
+                new AgentChatRequestDto("apply half day sick leave tomorrow", "conv-half-c"));
+        AgentChatResponseDto response = agentService.processMessage(
+                new AgentChatRequestDto("tomorrow afternoon", "conv-half-c"));
+
+        assertTrue(response.isActionExecuted());
+        ArgumentCaptor<CreateLeaveRequestDto> captor = ArgumentCaptor.forClass(CreateLeaveRequestDto.class);
+        Mockito.verify(leaveService).applyLeave(captor.capture(), eq(employee));
+        assertEquals("SECOND_HALF", captor.getValue().getHalfDaySession());
+    }
+
+    @Test
+    void halfDaySickNudgesSickRoomFloor6Room7() {
+        when(genAiClient.isConfigured()).thenReturn(false);
+        LeaveResponseDto created = halfDayCreatedDto();
+        when(leaveService.applyLeave(any(), eq(employee))).thenReturn(created);
+        when(wellbeingService.evaluateLeaveWellbeing(any(), eq(employee))).thenReturn(List.of());
+
+        AgentChatResponseDto response = agentService.processMessage(
+                new AgentChatRequestDto("apply half day sick leave tomorrow morning", "conv-half-d"));
+
+        assertTrue(response.isActionExecuted());
+        assertTrue(response.getReply().contains("Floor 6"));
+        assertTrue(response.getReply().contains("Room 7"));
     }
 }

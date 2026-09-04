@@ -23,6 +23,8 @@ public class AgentToolCatalog {
                                         "description", "End date in ISO YYYY-MM-DD format."),
                                 "halfDay", Map.of("type", "boolean",
                                         "description", "True for a half-day leave."),
+                                "halfDaySession", Map.of("type", "string",
+                                        "description", "Half-day session: FIRST_HALF or SECOND_HALF. Required when halfDay is true."),
                                 "reason", Map.of("type", "string",
                                         "description", "Reason for the leave request.")),
                         List.of("leaveType", "startDate", "endDate")),

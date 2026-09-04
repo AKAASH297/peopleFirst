@@ -446,6 +446,14 @@ public class AgentService {
             draft.setStartDate(start);
             draft.setEndDate(end);
             draft.setHalfDay(args.path("halfDay").asBoolean(false) || intentParser.extractHalfDay(message));
+            String sessionArg = args.path("halfDaySession").asText(null);
+            if (!"FIRST_HALF".equals(sessionArg) && !"SECOND_HALF".equals(sessionArg)) {
+                sessionArg = null;
+            }
+            if (sessionArg == null) {
+                sessionArg = intentParser.extractHalfDaySession(message);
+            }
+            draft.setHalfDaySession(sessionArg);
             draft.setDocAttached(intentParser.extractDocumentAttached(message));
             String reason = args.path("reason").asText(null);
             draft.setReason((reason != null && !reason.isBlank())
@@ -596,6 +604,7 @@ public class AgentService {
         LocalDate[] dates = intentParser.extractDates(message);
         boolean isHalfDay = intentParser.extractHalfDay(message);
         boolean docAttached = intentParser.extractDocumentAttached(message);
+        String extractedSession = intentParser.extractHalfDaySession(message);
 
         if (extractedType != null) {
             draft.setLeaveType(extractedType);
@@ -610,6 +619,9 @@ public class AgentService {
         if (isHalfDay) {
             draft.setHalfDay(true);
         }
+        if (extractedSession != null) {
+            draft.setHalfDaySession(extractedSession);
+        }
         if (docAttached) {
             draft.setDocAttached(true);
         }
@@ -622,6 +634,12 @@ public class AgentService {
         // If draft still missing dates
         if (draft.getStartDate() == null) {
             return promptForDates(draft.getLeaveType(), user);
+        }
+
+        // Half-day without a session -> ask which half
+        if (draft.isHalfDay() && draft.getHalfDaySession() == null) {
+            userDrafts.put(user.getId(), draft);
+            return promptForHalfDaySession(user);
         }
 
         // Both present -> execute application!
@@ -640,6 +658,7 @@ public class AgentService {
 
         PendingLeaveDraft draft = new PendingLeaveDraft();
         draft.setLeaveType(leaveType);
+        draft.setHalfDaySession(intentParser.extractHalfDaySession(message));
         draft.setCombinedWithType(combinedWithType);
         draft.setStartDate(startDate);
         draft.setEndDate(endDate != null ? endDate : startDate);
@@ -655,6 +674,12 @@ public class AgentService {
         if (draft.getStartDate() == null) {
             userDrafts.put(user.getId(), draft);
             return promptForDates(leaveType, user);
+        }
+
+        // Half-day without a session -> ask which half
+        if (draft.isHalfDay() && draft.getHalfDaySession() == null) {
+            userDrafts.put(user.getId(), draft);
+            return promptForHalfDaySession(user);
         }
 
         // Both present in single turn -> execute
@@ -699,6 +724,14 @@ public class AgentService {
 
         AgentChatResponseDto response = new AgentChatResponseDto(sb.toString(), AgentIntent.APPLY_LEAVE.name());
         response.setQuickReplies(getDateRecommendationChips(leaveType));
+        return response;
+    }
+
+    private AgentChatResponseDto promptForHalfDaySession(User user) {
+        AgentChatResponseDto response = new AgentChatResponseDto(
+                "Got it — **First half** (morning) or **Second half** (afternoon)?",
+                AgentIntent.APPLY_LEAVE.name());
+        response.setQuickReplies(List.of("First half (morning)", "Second half (afternoon)", "Cancel"));
         return response;
     }
 
@@ -767,6 +800,10 @@ public class AgentService {
             if (leaveType == LeaveType.SICK && daysBetween > 2) {
                 sb.append("• **Medical Certificate:** Digital placeholder attached for manager review (`DOC-")
                         .append(UUID.randomUUID().toString().substring(0, 8).toUpperCase()).append("`)\n");
+            }
+
+            if (leaveType == LeaveType.SICK && isHalfDay) {
+                sb.append("\n\n🛏️ If you're unwell and nearby, you can rest in the office sick room (**Floor 6, Room 7**) before heading home — just let reception know.");
             }
 
             AgentChatResponseDto response = new AgentChatResponseDto(sb.toString(), AgentIntent.APPLY_LEAVE.name());

@@ -350,4 +350,23 @@ class LeaveServiceTest {
         assertNotNull(result);
         assertEquals(LeaveStatus.PENDING, result.getStatus());
     }
+
+    @Test
+    @DisplayName("Half-day apply with an invalid session is rejected at the service")
+    void testInvalidHalfDaySessionRejectedAtService() {
+        LocalDate day = LocalDate.of(2026, 10, 7);
+        when(leaveRequestRepository.findByUserIdAndStatusInAndStartDateLessThanEqualAndEndDateGreaterThanEqual(
+                eq(employee.getId()), eq(List.of(LeaveStatus.PENDING, LeaveStatus.APPROVED)), eq(day), eq(day)))
+                .thenReturn(List.of());
+
+        CreateLeaveRequestDto dto = new CreateLeaveRequestDto();
+        dto.setLeaveType(LeaveType.SICK);
+        dto.setStartDate(day);
+        dto.setEndDate(day);
+        dto.setHalfDay(true);
+        dto.setHalfDaySession("MIDDLE");
+        dto.setReason("Invalid session probe");
+
+        assertThrows(PolicyViolationException.class, () -> leaveService.applyLeave(dto, employee));
+    }
 }

@@ -268,6 +268,20 @@ public class IntentParser {
         return lower.contains("half day") || lower.contains("half-day") || lower.contains("0.5 day");
     }
 
+    public String extractHalfDaySession(String message) {
+        if (message == null) return null;
+        String lower = message.toLowerCase();
+        if (lower.contains("morning") || lower.contains("first half") || lower.contains("1st half") ||
+                lower.contains("before noon")) {
+            return "FIRST_HALF";
+        }
+        if (lower.contains("afternoon") || lower.contains("second half") || lower.contains("2nd half") ||
+                lower.contains("after noon")) {
+            return "SECOND_HALF";
+        }
+        return null;
+    }
+
     public boolean extractDocumentAttached(String message) {
         if (message == null) return false;
         String lower = message.toLowerCase();

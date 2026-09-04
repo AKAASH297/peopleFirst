@@ -14,12 +14,12 @@ public class HalfDaySickLeaveWellbeingRule {
             String sickRoomDetails;
             String loc = user.getBaseLocation() != null ? user.getBaseLocation().toLowerCase() : "";
             if (loc.contains("hyderabad")) {
-                sickRoomDetails = "Building 3, 2nd Floor, Room 208 (First Aid & Rest Bay)";
+                sickRoomDetails = "Floor 6, Room 7 (First Aid & Rest Bay)";
             } else if (loc.contains("san jose")) {
-                sickRoomDetails = "Building A, 1st Floor, Room 114 (Wellness Suite)";
+                sickRoomDetails = "Floor 6, Room 7 (Wellness Suite)";
             } else {
                 // Default Bangalore / general campus
-                sickRoomDetails = "Building 2, 3rd Floor, Room 304 (Medical Bay & Resting Room)";
+                sickRoomDetails = "Floor 6, Room 7 (Medical Bay & Resting Room)";
             }
 
             WellbeingSuggestionDto suggestion = new WellbeingSuggestionDto(
