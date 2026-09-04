@@ -31,6 +31,7 @@ import com.peoplefirst.ticket.service.TicketService;
 import com.peoplefirst.user.entity.Role;
 import com.peoplefirst.user.entity.User;
 import com.peoplefirst.user.service.UserService;
+import com.peoplefirst.volunteering.service.VolunteeringService;
 import com.peoplefirst.wellbeing.dto.AmenityDto;
 import com.peoplefirst.wellbeing.dto.HospitalPartnerDto;
 import com.peoplefirst.wellbeing.dto.ResortPartnerDto;
@@ -79,6 +80,7 @@ public class AgentService {
     private final ApprovalService approvalService;
     private final TicketService ticketService;
     private final UserService userService;
+    private final VolunteeringService volunteeringService;
 
     // Multi-turn conversational leave draft store keyed by User UUID
     private final Map<UUID, PendingLeaveDraft> userDrafts = new ConcurrentHashMap<>();
@@ -88,6 +90,17 @@ public class AgentService {
     // Agentic loop state: per-conversation message history and pending write confirmations
     private final Map<String, List<Map<String, String>>> conversations = new ConcurrentHashMap<>();
     private final Map<UUID, PendingAgentAction> pendingActions = new ConcurrentHashMap<>();
+
+    // Post-apply volunteering CSR signup state keyed by User UUID
+    private final Map<UUID, PendingVolunteeringSignup> volunteeringSignups = new ConcurrentHashMap<>();
+
+    // Exact CSR chapter names from VolunteeringWellbeingRule (groupSuggestions)
+    private static final List<String> CSR_GROUPS = List.of(
+            "Green Earth Afforestation Drive",
+            "Code & Tech Literacy for Underprivileged Youth",
+            "Community Food Bank & Kitchen Support",
+            "Paws & Care Animal Rescue");
+    private static final String CSR_ENROLL_URL = "https://csr.peoplefirst.internal/enroll";
 
     public static final int MAX_MESSAGE_LENGTH = 2000;
 
@@ -104,7 +117,8 @@ public class AgentService {
                         GenAiClient genAiClient,
                         ApprovalService approvalService,
                         TicketService ticketService,
-                        UserService userService) {
+                        UserService userService,
+                        VolunteeringService volunteeringService) {
         this.intentParser = intentParser;
         this.currentUserProvider = currentUserProvider;
         this.leaveService = leaveService;
@@ -116,6 +130,7 @@ public class AgentService {
         this.approvalService = approvalService;
         this.ticketService = ticketService;
         this.userService = userService;
+        this.volunteeringService = volunteeringService;
     }
 
     public void clearDrafts() {
@@ -203,6 +218,19 @@ public class AgentService {
             userContexts.remove(user.getId());
             draft = null;
             editDraft = null;
+        }
+
+        PendingVolunteeringSignup signup = volunteeringSignups.get(user.getId());
+        if (signup != null && signup.isExpired()) {
+            volunteeringSignups.remove(user.getId());
+            signup = null;
+        }
+        if (signup != null) {
+            if (isExplicitOtherIntent) {
+                volunteeringSignups.remove(user.getId());
+            } else {
+                return continueVolunteeringSignup(message, signup, user);
+            }
         }
 
         // If user explicitly asks to start a new/fresh leave application, discard any old stale draft
@@ -293,6 +321,10 @@ public class AgentService {
                 if (AgentTool.APPLY_LEAVE.getName().equals(pending.getToolName())) {
                     return executeLeaveApplication(buildDraftFromArguments(pending.getArgumentsJson(), message), user);
                 }
+                if (AgentTool.APPROVE_LEAVE.getName().equals(pending.getToolName())
+                        || AgentTool.REJECT_LEAVE.getName().equals(pending.getToolName())) {
+                    return executeApprovalAction(pending, user);
+                }
                 return handleCancelLeave(message, user);
             }
             if (isDiscardReply(lower)) {
@@ -334,14 +366,14 @@ public class AgentService {
                 raw = Optional.empty();
             }
             if (raw.isEmpty()) {
-                return processRuleBased(new AgentChatRequestDto(message, conversationId), message, user);
+                return agentUnavailable();
             }
 
             JsonNode assistant;
             try {
                 assistant = mapper.readTree(raw.get());
             } catch (Exception e) {
-                return processRuleBased(new AgentChatRequestDto(message, conversationId), message, user);
+                return agentUnavailable();
             }
 
             String content = assistant.path("content").isNull()
@@ -421,10 +453,14 @@ public class AgentService {
                         appendToHistory(history, Map.of("role", "tool",
                                 "tool_call_id", toolCallId, "content", toCompactJson(toolResponse.getActionData())));
                     }
-                    case APPLY_LEAVE, CANCEL_LEAVE -> {
+                    case APPLY_LEAVE, CANCEL_LEAVE, APPROVE_LEAVE, REJECT_LEAVE -> {
                         pendingActions.put(user.getId(), new PendingAgentAction(tool.getName(), argumentsJson));
                         String intent = tool == AgentTool.APPLY_LEAVE
-                                ? AgentIntent.APPLY_LEAVE.name() : AgentIntent.CANCEL_LEAVE.name();
+                                ? AgentIntent.APPLY_LEAVE.name()
+                                : tool == AgentTool.CANCEL_LEAVE
+                                ? AgentIntent.CANCEL_LEAVE.name()
+                                : tool == AgentTool.APPROVE_LEAVE
+                                ? AgentIntent.APPROVE_LEAVE.name() : AgentIntent.REJECT_LEAVE.name();
                         AgentChatResponseDto confirm = new AgentChatResponseDto(
                                 "I've prepared " + summarizeArguments(tool, argumentsJson)
                                         + ". Reply **yes** to confirm or **no** to discard.",
@@ -440,7 +476,16 @@ public class AgentService {
         if (lastToolResponse != null) {
             return lastToolResponse;
         }
-        return processRuleBased(new AgentChatRequestDto(message, conversationId), message, user);
+        return agentUnavailable();
+    }
+
+    private AgentChatResponseDto agentUnavailable() {
+        AgentChatResponseDto response = new AgentChatResponseDto(
+                "Kura's AI brain isn't reachable right now — please try again in a moment. Nothing was submitted.",
+                AgentIntent.UNKNOWN.name());
+        response.setActionExecuted(false);
+        response.setQuickReplies(List.of("Check my balances", "Apply for leave", "Company leave policies"));
+        return response;
     }
 
     private boolean isConfirmReply(String lower) {
@@ -477,6 +522,12 @@ public class AgentService {
     private String summarizeArguments(AgentTool tool, String argumentsJson) {
         if (tool == AgentTool.CANCEL_LEAVE) {
             return "cancellation of your upcoming leave";
+        }
+        if (tool == AgentTool.APPROVE_LEAVE) {
+            return "approval of the requested team leave";
+        }
+        if (tool == AgentTool.REJECT_LEAVE) {
+            return "rejection of the requested team leave";
         }
         try {
             JsonNode args = new ObjectMapper().readTree(argumentsJson != null ? argumentsJson : "{}");
@@ -530,6 +581,14 @@ public class AgentService {
             draft.setStartDate(start);
             draft.setEndDate(end);
             draft.setHalfDay(args.path("halfDay").asBoolean(false) || intentParser.extractHalfDay(message));
+            String sessionArg = args.path("halfDaySession").asText(null);
+            if (!"FIRST_HALF".equals(sessionArg) && !"SECOND_HALF".equals(sessionArg)) {
+                sessionArg = null;
+            }
+            if (sessionArg == null) {
+                sessionArg = intentParser.extractHalfDaySession(message);
+            }
+            draft.setHalfDaySession(sessionArg);
             draft.setDocAttached(intentParser.extractDocumentAttached(message));
             String reason = args.path("reason").asText(null);
             draft.setReason((reason != null && !reason.isBlank())
@@ -576,6 +635,10 @@ public class AgentService {
         sb.append("- Late requests or retrospective corrections require raising a Support Ticket.\n");
         sb.append("- Campus Wellbeing perks: Zero-gravity massage chairs (Bldg 1, 4th Fl), Games lounge (Bldg 3, 3rd Fl), Psychologist counseling (Bldg 2, 2nd Fl), Guided Yoga (Bldg 1, Terrace).\n");
         sb.append("- Healthcare: Partner hospital OPD discounts available; OPD claims must be submitted within 90 days.\n");
+        if (user.getRole() == Role.MANAGER || user.getRole() == Role.ADMIN) {
+            sb.append("- As a ").append(user.getRole().name())
+                    .append(" you can review team leave: ask me for \"pending approvals\" and approve or reject by number.\n");
+        }
         sb.append("Formatting rule: NEVER use markdown tables (pipes) — this chat cannot render them. Present tabular data as bullet lists with bold labels (e.g. \"• **Sick Leave:** 16 days remaining\").\n");
         sb.append("Respond warmly, concisely, and empathetically. Keep markdown formatting clean.");
         return sb.toString();
@@ -1269,7 +1332,7 @@ public class AgentService {
     private AgentChatResponseDto promptForLeaveType(User user) {
         String roleNote = user.isContractor()
                 ? "As a contractor partner, you are eligible for **Sick Leave**, **Paid Leave**, or **Loss of Pay (LOP)**."
-                : "You can apply for **Casual Leave**, **Sick Leave**, **Paid Leave**, **Work From Home (WFH)**, or **Loss of Pay (LOP)**.";
+                : "You can apply for **Casual Leave**, **Sick Leave**, **Paid Leave**, **Work From Home (WFH)**, **Loss of Pay (LOP)**, or **Volunteering Leave**.";
 
         String reply = "I would be glad to help you submit a leave request!\n\n" + roleNote + "\n\nWhich type of leave would you like to apply for?";
         AgentChatResponseDto response = new AgentChatResponseDto(reply, AgentIntent.APPLY_LEAVE.name());
@@ -1293,7 +1356,7 @@ public class AgentService {
         if (user.isContractor()) {
             return List.of("Sick Leave", "Paid Leave", "Loss of Pay (LOP)", "Cancel");
         } else {
-            return List.of("Casual Leave", "Sick Leave", "Paid Leave", "Work From Home (WFH)", "Loss of Pay (LOP)", "Cancel");
+            return List.of("Casual Leave", "Sick Leave", "Paid Leave", "Work From Home (WFH)", "Loss of Pay (LOP)", "Volunteering Leave", "Cancel");
         }
     }
 
@@ -1390,6 +1453,17 @@ public class AgentService {
                         .append(UUID.randomUUID().toString().substring(0, 8).toUpperCase()).append("`)\n");
             }
 
+            if (leaveType == LeaveType.SICK && isHalfDay) {
+                sb.append("\n\n🛏️ If you're unwell and nearby, you can rest in the office sick room (**Floor 6, Room 7**) before heading home — just let reception know.");
+            }
+
+            if (leaveType == LeaveType.VOLUNTEERING && created.getId() != null) {
+                volunteeringSignups.put(user.getId(), new PendingVolunteeringSignup(created.getId()));
+                sb.append("\n\n🌱 **CSR chapters you can join:** ")
+                        .append(String.join(", ", CSR_GROUPS))
+                        .append(".\nWant me to enroll you in one — and feature you on the company intranet banner? Reply with the group name (add \"and feature me\" for the banner).");
+            }
+
             AgentChatResponseDto response = new AgentChatResponseDto(sb.toString(), AgentIntent.APPLY_LEAVE.name());
             response.setActionExecuted(true);
             response.setActionName("APPLY_LEAVE");
@@ -1402,7 +1476,9 @@ public class AgentService {
                 response.setWellbeingSuggestions(wellbeingSuggestions);
             } catch (Exception ignored) {}
 
-            response.setQuickReplies(getPostActionQuickReplies(user));
+            response.setQuickReplies(leaveType == LeaveType.VOLUNTEERING
+                    ? csrQuickReplies()
+                    : getPostActionQuickReplies(user));
             return response;
 
         } catch (PolicyViolationException pve) {
@@ -1471,6 +1547,102 @@ public class AgentService {
 
     private List<String> getPostActionQuickReplies(User user) {
         return List.of("Check my balances", "View my leaves", "Company leave policies", "Explore amenities");
+    }
+
+    private AgentChatResponseDto executeApprovalAction(PendingAgentAction pending, User user) {
+        boolean approve = AgentTool.APPROVE_LEAVE.getName().equals(pending.getToolName());
+        UUID leaveId = null;
+        String comment = null;
+        try {
+            JsonNode args = new ObjectMapper()
+                    .readTree(pending.getArgumentsJson() != null ? pending.getArgumentsJson() : "{}");
+            String idText = args.path("leaveId").asText(null);
+            if (idText != null && !idText.isBlank()) {
+                leaveId = UUID.fromString(idText.trim());
+            }
+            comment = args.path("comment").asText(null);
+        } catch (Exception e) {
+            leaveId = null;
+        }
+        if (leaveId == null) {
+            AgentChatResponseDto invalid = new AgentChatResponseDto(
+                    "That leave ID didn't look valid — please try again.",
+                    approve ? AgentIntent.APPROVE_LEAVE.name() : AgentIntent.REJECT_LEAVE.name());
+            invalid.setActionExecuted(false);
+            invalid.setQuickReplies(getPostActionQuickReplies(user));
+            return invalid;
+        }
+        ApprovalActionDto action = new ApprovalActionDto();
+        action.setComment((comment != null && !comment.isBlank())
+                ? comment : (approve ? "Approved via Kura" : "Rejected via Kura"));
+        LeaveResponseDto result = approve
+                ? approvalService.approveLeave(leaveId, action, user)
+                : approvalService.rejectLeave(leaveId, action, user);
+        String verb = approve ? "Approved" : "Rejected";
+        String reply = "✅ " + verb + " " + result.getEmployeeName() + "'s "
+                + result.getLeaveTypeDisplayName() + " (" + result.getStartDate()
+                + " to " + result.getEndDate() + ").";
+        AgentChatResponseDto response = new AgentChatResponseDto(reply,
+                approve ? AgentIntent.APPROVE_LEAVE.name() : AgentIntent.REJECT_LEAVE.name());
+        response.setActionExecuted(true);
+        response.setActionName(approve ? "APPROVE_LEAVE" : "REJECT_LEAVE");
+        response.setActionData(result);
+        response.setQuickReplies(getPostActionQuickReplies(user));
+        return response;
+    }
+
+    private AgentChatResponseDto continueVolunteeringSignup(String message, PendingVolunteeringSignup signup, User user) {
+        String lower = message.toLowerCase().trim();
+        if (lower.equals("no thanks") || lower.equals("no") || lower.equals("cancel") ||
+                lower.equals("stop") || lower.equals("discard") || lower.equals("never mind") ||
+                lower.equals("nevermind")) {
+            volunteeringSignups.remove(user.getId());
+            AgentChatResponseDto declined = new AgentChatResponseDto(
+                    "No problem — enjoy your volunteering leave!", AgentIntent.APPLY_LEAVE.name());
+            declined.setQuickReplies(getPostActionQuickReplies(user));
+            return declined;
+        }
+
+        String matched = matchCsrGroup(message);
+        if (matched != null) {
+            boolean banner = lower.contains("feature");
+            volunteeringService.enroll(user.getId(), matched, signup.getLeaveRequestId(), banner);
+            volunteeringSignups.remove(user.getId());
+            String reply = banner
+                    ? "You're enrolled in **" + matched + "**! You'll be featured on the intranet banner. Reach out to CSR at " + CSR_ENROLL_URL + " for onboarding."
+                    : "You're enrolled in **" + matched + "**!";
+            AgentChatResponseDto enrolled = new AgentChatResponseDto(reply, AgentIntent.APPLY_LEAVE.name());
+            enrolled.setActionExecuted(true);
+            enrolled.setActionName("VOLUNTEER_ENROLL");
+            enrolled.setQuickReplies(getPostActionQuickReplies(user));
+            return enrolled;
+        }
+
+        volunteeringSignups.put(user.getId(), signup);
+        AgentChatResponseDto reprompt = new AgentChatResponseDto(
+                "Which CSR chapter would you like to join? Reply with the group name (add \"and feature me\" for the intranet banner).",
+                AgentIntent.APPLY_LEAVE.name());
+        reprompt.setQuickReplies(csrQuickReplies());
+        return reprompt;
+    }
+
+    private String matchCsrGroup(String message) {
+        if (message == null) {
+            return null;
+        }
+        String lower = message.toLowerCase();
+        for (String group : CSR_GROUPS) {
+            if (lower.contains(group.toLowerCase())) {
+                return group;
+            }
+        }
+        return null;
+    }
+
+    private List<String> csrQuickReplies() {
+        List<String> replies = new ArrayList<>(CSR_GROUPS);
+        replies.add("No thanks");
+        return replies;
     }
 
     private AgentChatResponseDto handleCancelLeave(String message, User user) {
@@ -2638,5 +2810,20 @@ public class AgentService {
 
         String getToolName() { return toolName; }
         String getArgumentsJson() { return argumentsJson; }
+    }
+
+    private static class PendingVolunteeringSignup {
+        private final UUID leaveRequestId;
+        private final long createdAt = System.currentTimeMillis();
+
+        PendingVolunteeringSignup(UUID leaveRequestId) {
+            this.leaveRequestId = leaveRequestId;
+        }
+
+        boolean isExpired() {
+            return (System.currentTimeMillis() - createdAt) > (15 * 60 * 1000L); // 15 mins expiry
+        }
+
+        UUID getLeaveRequestId() { return leaveRequestId; }
     }
 }
