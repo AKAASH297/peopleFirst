@@ -85,7 +85,7 @@ export const AgentChat = {
               ✨
             </div>
             <div>
-              <div style="font-weight: 700; font-size: 1.0625rem; color: var(--text-main);">Kura AI Concierge — Contractor Portal</div>
+              <div style="font-weight: 700; font-size: 1.0625rem; color: var(--text-main);">Kura · Leave & Wellbeing Concierge</div>
               <div style="font-size: 0.75rem; color: var(--text-muted);">
                 Logged in as <strong>${user.fullName}</strong> (${user.contractor ? 'Contractor Partner' : user.role})
               </div>
@@ -411,12 +411,64 @@ export const AgentChat = {
 
   formatReply(text) {
     if (!text) return '';
-    return text
+    const lines = text.split('\n');
+    let html = '';
+    let i = 0;
+    while (i < lines.length) {
+      if (this.isTableStart(lines, i)) {
+        const rows = [];
+        let j = i;
+        while (j < lines.length && lines[j].startsWith('|')) {
+          rows.push(lines[j]);
+          j++;
+        }
+        html += this.renderTable(rows);
+        i = j;
+      } else {
+        html += this.formatInline(lines[i]);
+        if (i < lines.length - 1) html += '<br/>';
+        i++;
+      }
+    }
+    return html;
+  },
+
+  escapeHtml(s) {
+    return s
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  },
+
+  formatInline(line) {
+    let s = this.escapeHtml(line);
+    return s
       .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
       .replace(/\*(.*?)\*/g, '<em>$1</em>')
       .replace(/`([^`]+)`/g, '<code style="background:rgba(0,0,0,0.06); padding:2px 5px; border-radius:4px; font-size:0.85em;">$1</code>')
-      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" style="color:#0284c7; text-decoration:underline;">$1</a>')
-      .replace(/(?:^|\n)> (.*?)(?=\n|$)/g, '<blockquote style="border-left:3px solid #0ea5e9; margin:6px 0; padding:4px 10px; color:#475569; background:#f8fafc; border-radius:0 4px 4px 0;">$1</blockquote>')
-      .replace(/\n/g, '<br/>');
+      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" style="color:#0284c7; text-decoration:underline;">$1</a>');
+  },
+
+  isTableStart(lines, i) {
+    return i + 1 < lines.length
+      && lines[i].startsWith('|')
+      && lines[i + 1].startsWith('|')
+      && /^[\s|:\-]+$/.test(lines[i + 1]);
+  },
+
+  renderTable(rows) {
+    const cells = (row) => {
+      let t = row.trim();
+      if (t.startsWith('|')) t = t.slice(1);
+      if (t.endsWith('|')) t = t.slice(0, -1);
+      return t.split('|').map((c) => this.escapeHtml(c.trim()));
+    };
+    const header = cells(rows[0]).map((c) => `<th>${c}</th>`).join('');
+    const body = rows.slice(2)
+      .map((row) => `<tr>${cells(row).map((c) => `<td>${c}</td>`).join('')}</tr>`)
+      .join('');
+    return `<table class="kura-table"><thead><tr>${header}</tr></thead><tbody>${body}</tbody></table>`;
   }
 };

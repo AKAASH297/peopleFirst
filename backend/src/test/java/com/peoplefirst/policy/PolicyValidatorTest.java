@@ -36,80 +36,84 @@ class PolicyValidatorTest {
     @Test
     @DisplayName("Criterion 2: Contractor cannot apply Casual, WFH, Maternity, or Volunteering")
     void testContractorIneligibleLeaveTypes() {
-        LocalDate start = LocalDate.now().plusDays(5);
-        LocalDate end = LocalDate.now().plusDays(6);
+        LocalDate appliedDate = LocalDate.of(2026, 9, 7);
+        LocalDate start = LocalDate.of(2026, 9, 8);
+        LocalDate end = LocalDate.of(2026, 9, 9);
 
         // Casual
         assertThrows(PolicyViolationException.class, () ->
-                policyValidator.validateLeaveApplication(contractor, LeaveType.CASUAL, null, start, end, 2.0, false, null, LocalDate.now()));
+                policyValidator.validateLeaveApplication(contractor, LeaveType.CASUAL, null, start, end, 2.0, false, null, appliedDate));
 
         // WFH
         assertThrows(PolicyViolationException.class, () ->
-                policyValidator.validateLeaveApplication(contractor, LeaveType.WFH, null, start, end, 2.0, false, null, LocalDate.now()));
+                policyValidator.validateLeaveApplication(contractor, LeaveType.WFH, null, start, end, 2.0, false, null, appliedDate));
 
         // Maternity
         assertThrows(PolicyViolationException.class, () ->
-                policyValidator.validateLeaveApplication(contractor, LeaveType.MATERNITY, null, start, end, 2.0, false, null, LocalDate.now()));
+                policyValidator.validateLeaveApplication(contractor, LeaveType.MATERNITY, null, start, end, 2.0, false, null, appliedDate));
 
         // Volunteering
         assertThrows(PolicyViolationException.class, () ->
-                policyValidator.validateLeaveApplication(contractor, LeaveType.VOLUNTEERING, null, start, end, 2.0, false, null, LocalDate.now()));
+                policyValidator.validateLeaveApplication(contractor, LeaveType.VOLUNTEERING, null, start, end, 2.0, false, null, appliedDate));
 
         // Contractor CAN apply eligible type (Sick <= 2 days)
         assertDoesNotThrow(() ->
-                policyValidator.validateLeaveApplication(contractor, LeaveType.SICK, null, start, start, 1.0, false, null, LocalDate.now()));
+                policyValidator.validateLeaveApplication(contractor, LeaveType.SICK, null, start, start, 1.0, false, null, appliedDate));
     }
 
     @Test
     @DisplayName("Criterion 3: Casual Leave rejected unless combined with nothing, or with WFH only")
     void testCasualLeaveCombinations() {
-        LocalDate start = LocalDate.now().plusDays(5);
-        LocalDate end = LocalDate.now().plusDays(6);
+        LocalDate appliedDate = LocalDate.of(2026, 9, 7);
+        LocalDate start = LocalDate.of(2026, 9, 8);
+        LocalDate end = LocalDate.of(2026, 9, 9);
 
         // Casual alone is valid
         assertDoesNotThrow(() ->
-                policyValidator.validateLeaveApplication(employee, LeaveType.CASUAL, null, start, end, 2.0, false, null, LocalDate.now()));
+                policyValidator.validateLeaveApplication(employee, LeaveType.CASUAL, null, start, end, 2.0, false, null, appliedDate));
 
         // Casual combined with WFH is valid
         assertDoesNotThrow(() ->
-                policyValidator.validateLeaveApplication(employee, LeaveType.CASUAL, LeaveType.WFH, start, end, 2.0, false, null, LocalDate.now()));
+                policyValidator.validateLeaveApplication(employee, LeaveType.CASUAL, LeaveType.WFH, start, end, 2.0, false, null, appliedDate));
 
         // Casual combined with Sick is rejected
         assertThrows(PolicyViolationException.class, () ->
-                policyValidator.validateLeaveApplication(employee, LeaveType.CASUAL, LeaveType.SICK, start, end, 2.0, false, null, LocalDate.now()));
+                policyValidator.validateLeaveApplication(employee, LeaveType.CASUAL, LeaveType.SICK, start, end, 2.0, false, null, appliedDate));
 
         // Casual combined with Paid is rejected
         assertThrows(PolicyViolationException.class, () ->
-                policyValidator.validateLeaveApplication(employee, LeaveType.CASUAL, LeaveType.PAID, start, end, 2.0, false, null, LocalDate.now()));
+                policyValidator.validateLeaveApplication(employee, LeaveType.CASUAL, LeaveType.PAID, start, end, 2.0, false, null, appliedDate));
     }
 
     @Test
     @DisplayName("Criterion 3b: Contractor has zero combination rights")
     void testContractorZeroCombinations() {
-        LocalDate start = LocalDate.now().plusDays(5);
-        LocalDate end = LocalDate.now().plusDays(6);
+        LocalDate appliedDate = LocalDate.of(2026, 9, 7);
+        LocalDate start = LocalDate.of(2026, 9, 8);
+        LocalDate end = LocalDate.of(2026, 9, 9);
 
         assertThrows(PolicyViolationException.class, () ->
-                policyValidator.validateLeaveApplication(contractor, LeaveType.SICK, LeaveType.PAID, start, end, 2.0, false, null, LocalDate.now()));
+                policyValidator.validateLeaveApplication(contractor, LeaveType.SICK, LeaveType.PAID, start, end, 2.0, false, null, appliedDate));
     }
 
     @Test
     @DisplayName("Criterion 4: Sick Leave > 2 days blocked until medical documents attached")
     void testSickLeaveDocumentationRequirement() {
-        LocalDate start = LocalDate.now().plusDays(5);
-        LocalDate end = LocalDate.now().plusDays(7); // 3 days
+        LocalDate appliedDate = LocalDate.of(2026, 9, 7);
+        LocalDate start = LocalDate.of(2026, 9, 8); // Tuesday
+        LocalDate end = LocalDate.of(2026, 9, 10); // Thursday (3 days: Tue, Wed, Thu)
 
         // 3 days without document -> must throw
         assertThrows(PolicyViolationException.class, () ->
-                policyValidator.validateLeaveApplication(employee, LeaveType.SICK, null, start, end, 3.0, false, null, LocalDate.now()));
+                policyValidator.validateLeaveApplication(employee, LeaveType.SICK, null, start, end, 3.0, false, null, appliedDate));
 
         // 3 days with document -> valid
         assertDoesNotThrow(() ->
-                policyValidator.validateLeaveApplication(employee, LeaveType.SICK, null, start, end, 3.0, true, "https://doc.pdf", LocalDate.now()));
+                policyValidator.validateLeaveApplication(employee, LeaveType.SICK, null, start, end, 3.0, true, "https://doc.pdf", appliedDate));
 
         // <= 2 days without document -> valid
         assertDoesNotThrow(() ->
-                policyValidator.validateLeaveApplication(employee, LeaveType.SICK, null, start, start.plusDays(1), 2.0, false, null, LocalDate.now()));
+                policyValidator.validateLeaveApplication(employee, LeaveType.SICK, null, start, start.plusDays(1), 2.0, false, null, appliedDate));
     }
 
     @Test

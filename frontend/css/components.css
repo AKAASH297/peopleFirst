@@ -428,3 +428,19 @@ input[type="date"]::-webkit-calendar-picker-indicator:hover {
   padding: 0.5rem 0.75rem;
   font-size: 0.875rem;
 }
+.kura-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: inherit;
+  margin: 0.25rem 0;
+}
+.kura-table th,
+.kura-table td {
+  border: 1px solid var(--border);
+  padding: 0.25rem 0.5rem;
+  text-align: left;
+}
+.kura-table th {
+  background: #f1f5f9;
+  font-weight: 600;
+}

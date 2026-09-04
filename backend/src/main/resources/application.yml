@@ -25,6 +25,8 @@ app:
     refresh-expiration-ms: 604800000 # 7 days
   genai:
     enabled: ${GENAI_ENABLED:true}
+    provider: ${GENAI_PROVIDER:auto}
     api-key: ${GEMINI_API_KEY:${OPENAI_API_KEY:${GENAI_API_KEY:}}}
     model: ${GENAI_MODEL:${GEMINI_MODEL:gemini-1.5-pro}}
     endpoint: https://generativelanguage.googleapis.com/v1beta/models
+    base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
